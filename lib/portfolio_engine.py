@@ -1,0 +1,291 @@
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+
+
+def compute_wac(transactions: pd.DataFrame) -> dict:
+    """
+    Her varlık için Ağırlıklı Ortalama Maliyet ve elde tutulan adet hesaplar.
+    Kısmi satışta WAC sabit kalır (FIFO kullanılmaz).
+
+    Returns:
+        dict keyed by 'Varlık Adı':
+            {"wac": float, "units": float, "realized_pnl": float}
+    """
+    state = {}
+    for _, row in transactions.sort_values("Tarih").iterrows():
+        asset = row["Varlık Adı"]
+        islem = row["İşlem Türü"]
+        if islem not in ("ALIŞ", "SATIŞ"):
+            continue
+        if asset not in state:
+            state[asset] = {"wac": 0.0, "units": 0.0, "realized_pnl": 0.0}
+
+        s = state[asset]
+        if islem == "ALIŞ":
+            total_cost = s["wac"] * s["units"] + (row["Fiyat"] + row["Komisyon"] / row["Miktar"]) * row["Miktar"]
+            s["units"] += row["Miktar"]
+            s["wac"] = total_cost / s["units"] if s["units"] > 0 else 0.0
+        elif islem == "SATIŞ":
+            realized = (row["Fiyat"] - s["wac"]) * row["Miktar"] - row["Komisyon"]
+            s["realized_pnl"] += realized
+            s["units"] = max(0.0, s["units"] - row["Miktar"])
+            # WAC değişmez
+
+    return state
+
+
+def compute_portfolio_value_series(
+    transactions: pd.DataFrame,
+    prices: pd.DataFrame,
+    fx_usdtry: pd.Series,
+    symbol_map: dict,
+) -> pd.DataFrame:
+    """
+    İlk işlem tarihinden bugüne günlük portföy değeri.
+
+    Args:
+        symbol_map: {"Varlık Adı": "yfinance_sembol", ...}
+                    USD bazlı semboller (GC=F, SI=F) otomatik TL'ye çevrilir.
+    Returns:
+        DataFrame: index=Date, columns=[total_value_tl, total_value_usd, asset_values_tl, units_held]
+    """
+    usd_symbols = {"GC=F", "SI=F"}
+    start_date = transactions["Tarih"].min()
+    date_range = pd.date_range(start_date, datetime.today(), freq="B")
+
+    # Kümülatif pozisyon günlük izle
+    position_tracker = {}  # asset -> units (rolling)
+    wac_tracker = {}       # asset -> wac (rolling)
+
+    tx_sorted = transactions[transactions["İşlem Türü"].isin(["ALIŞ", "SATIŞ"])].sort_values("Tarih")
+
+    records = []
+    tx_idx = 0
+    tx_list = tx_sorted.reset_index(drop=True)
+
+    for date in date_range:
+        # Bugüne kadar gerçekleşen işlemleri uygula
+        while tx_idx < len(tx_list) and tx_list.loc[tx_idx, "Tarih"] <= date:
+            row = tx_list.loc[tx_idx]
+            asset = row["Varlık Adı"]
+            if asset not in position_tracker:
+                position_tracker[asset] = 0.0
+                wac_tracker[asset] = 0.0
+
+            if row["İşlem Türü"] == "ALIŞ":
+                total_cost = (
+                    wac_tracker[asset] * position_tracker[asset]
+                    + (row["Fiyat"] + row["Komisyon"] / max(row["Miktar"], 1e-9)) * row["Miktar"]
+                )
+                position_tracker[asset] += row["Miktar"]
+                wac_tracker[asset] = total_cost / position_tracker[asset] if position_tracker[asset] > 0 else 0.0
+            elif row["İşlem Türü"] == "SATIŞ":
+                position_tracker[asset] = max(0.0, position_tracker[asset] - row["Miktar"])
+
+            tx_idx += 1
+
+        # Günlük değer hesapla
+        total_tl = 0.0
+        asset_values = {}
+        date_str = date.strftime("%Y-%m-%d")
+
+        for asset, units in position_tracker.items():
+            if units <= 0:
+                continue
+            sym = symbol_map.get(asset)
+            if sym is None or sym not in prices.columns:
+                continue
+
+            price_date = _nearest_price(prices[sym], date)
+            if price_date is None:
+                continue
+
+            price = prices[sym].loc[price_date]
+            if sym in usd_symbols:
+                fx_date = _nearest_price(fx_usdtry, date)
+                fx = fx_usdtry.loc[fx_date] if fx_date else 1.0
+                value_tl = price * fx * units
+            else:
+                value_tl = price * units
+
+            asset_values[asset] = value_tl
+            total_tl += value_tl
+
+        fx_today = _nearest_price(fx_usdtry, date)
+        fx_rate = fx_usdtry.loc[fx_today] if fx_today else 1.0
+        total_usd = total_tl / fx_rate if fx_rate > 0 else 0.0
+
+        records.append({
+            "date": date,
+            "total_value_tl": total_tl,
+            "total_value_usd": total_usd,
+            "asset_values_tl": asset_values.copy(),
+            "units_held": position_tracker.copy(),
+        })
+
+    return pd.DataFrame(records).set_index("date")
+
+
+def compute_twrr(
+    portfolio_values: pd.DataFrame,
+    transactions: pd.DataFrame,
+    currency: str = "TL",
+) -> pd.Series:
+    """
+    Modified Dietz yaklaşımıyla TWRR. Alt-dönem sınırı = her NAKIT_GIRIS/CIKIS.
+    Returns: pd.Series index=date, values=cumulative index (başlangıç=100)
+    """
+    value_col = "total_value_tl" if currency == "TL" else "total_value_usd"
+    values = portfolio_values[value_col].copy()
+
+    cash_flows = transactions[transactions["İşlem Türü"].isin(["NAKIT_GIRIS", "NAKIT_CIKIS"])].copy()
+    cash_flows["net"] = cash_flows.apply(
+        lambda r: r["Fiyat"] * r["Miktar"] if r["İşlem Türü"] == "NAKIT_GIRIS" else -r["Fiyat"] * r["Miktar"],
+        axis=1,
+    )
+
+    flow_dates = sorted(cash_flows["Tarih"].dt.normalize().unique().tolist())
+    all_dates = values.index.tolist()
+
+    # Dönem sınırları
+    breakpoints = [all_dates[0]] + flow_dates + [all_dates[-1]]
+    breakpoints = sorted(set(breakpoints))
+
+    sub_returns = []
+    for i in range(len(breakpoints) - 1):
+        start = breakpoints[i]
+        end = breakpoints[i + 1]
+
+        period_vals = values.loc[start:end]
+        if len(period_vals) < 2:
+            continue
+
+        v_start = period_vals.iloc[0]
+        v_end = period_vals.iloc[-1]
+
+        # Dönem içi nakit akışları (Modified Dietz ağırlığı)
+        period_flows = cash_flows[
+            (cash_flows["Tarih"] >= start) & (cash_flows["Tarih"] < end)
+        ]
+        weighted_cf = 0.0
+        period_len = max((end - start).days, 1)
+        for _, cf_row in period_flows.iterrows():
+            days_remaining = (end - cf_row["Tarih"]).days
+            weighted_cf += cf_row["net"] * (days_remaining / period_len)
+
+        denominator = v_start + weighted_cf
+        if denominator == 0:
+            sub_return = 0.0
+        else:
+            sub_return = (v_end - v_start - period_flows["net"].sum()) / denominator
+
+        sub_returns.append((start, end, sub_return))
+
+    # Kümülatif indeks inşa et
+    index_series = pd.Series(index=all_dates, dtype=float)
+    index_series.iloc[0] = 100.0
+    cumulative = 1.0
+
+    sub_idx = 0
+    for i, date in enumerate(all_dates[1:], 1):
+        prev_date = all_dates[i - 1]
+        # Bu gün bir dönem sonuysa yeni alt-getiriyi uygula
+        if sub_idx < len(sub_returns) and date >= sub_returns[sub_idx][1]:
+            cumulative *= (1 + sub_returns[sub_idx][2])
+            sub_idx += 1
+        prev_v = values.loc[prev_date]
+        curr_v = values.loc[date]
+        daily_r = (curr_v - prev_v) / prev_v if prev_v != 0 else 0.0
+        index_series.iloc[i] = index_series.iloc[i - 1] * (1 + daily_r)
+
+    return index_series
+
+
+def compute_asset_contributions(
+    transactions: pd.DataFrame,
+    prices: pd.DataFrame,
+    wac_state: dict,
+    symbol_map: dict,
+    start_date: str,
+    end_date: str,
+    fx_usdtry: pd.Series = None,
+) -> pd.DataFrame:
+    """
+    Her varlığın P&L katkısını hesaplar (Brinson attribution).
+    Returns: DataFrame [Varlık Adı, pnl_tl, pnl_pct, weight_pct, contribution_pct]
+    """
+    usd_symbols = {"GC=F", "SI=F"}
+    end_dt = pd.Timestamp(end_date)
+    start_dt = pd.Timestamp(start_date)
+
+    rows = []
+    total_portfolio_value = 0.0
+
+    for asset, state in wac_state.items():
+        units = state["units"]
+        wac = state["wac"]
+        sym = symbol_map.get(asset)
+        if sym is None or units <= 0:
+            continue
+
+        price_end = _nearest_price(prices[sym], end_dt) if sym in prices.columns else None
+        if price_end is None:
+            continue
+
+        current_price = prices[sym].loc[price_end]
+        if sym in usd_symbols and fx_usdtry is not None:
+            fx_date = _nearest_price(fx_usdtry, end_dt)
+            fx = fx_usdtry.loc[fx_date] if fx_date else 1.0
+            current_price_tl = current_price * fx
+            wac_tl = wac  # WAC zaten TL cinsinden saklanır (alış anında çevrilmiş)
+        else:
+            current_price_tl = current_price
+            wac_tl = wac
+
+        value_tl = current_price_tl * units
+        cost_tl = wac_tl * units
+        pnl_tl = value_tl - cost_tl
+        pnl_pct = (pnl_tl / cost_tl * 100) if cost_tl > 0 else 0.0
+        total_portfolio_value += value_tl
+
+        rows.append({
+            "Varlık Adı": asset,
+            "pnl_tl": pnl_tl,
+            "pnl_pct": pnl_pct,
+            "value_tl": value_tl,
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=["Varlık Adı", "pnl_tl", "pnl_pct", "weight_pct", "contribution_pct"])
+
+    df = pd.DataFrame(rows)
+    df["weight_pct"] = df["value_tl"] / total_portfolio_value * 100
+    df["contribution_pct"] = df["weight_pct"] / 100 * df["pnl_pct"]
+    return df.drop(columns=["value_tl"]).sort_values("contribution_pct", ascending=False).reset_index(drop=True)
+
+
+def compute_real_return_series(
+    nominal_series: pd.Series,
+    cpi_series: pd.Series,
+) -> pd.Series:
+    """
+    Nominal TL serisini TÜFE ile deflate eder. Başlangıç=100.
+    """
+    aligned_cpi = cpi_series.reindex(nominal_series.index).ffill().bfill()
+    cpi_base = aligned_cpi.iloc[0]
+    real = nominal_series / (aligned_cpi / cpi_base)
+    real = real / real.iloc[0] * 100
+    return real
+
+
+def _nearest_price(series: pd.Series, date: pd.Timestamp):
+    """En yakın önceki tarihi bulur (backfill)."""
+    try:
+        available = series.index[series.index <= date]
+        if available.empty:
+            return None
+        return available[-1]
+    except Exception:
+        return None

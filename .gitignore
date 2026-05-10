@@ -1,0 +1,44 @@
+# --- Claude / proje meta ---
+docs/
+CLAUDE.md
+RULES.md
+Plans.md
+
+# --- Veri ve cache (kisisel, buyuk dosyalar) ---
+data/cache/
+data/*.pkl
+data/portfolio.csv
+data/transactions.csv
+
+# --- Notebook ciktilari ---
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# --- Python ---
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Conda / venv ---
+env/
+venv/
+.venv/
+*.conda
+conda-meta/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
