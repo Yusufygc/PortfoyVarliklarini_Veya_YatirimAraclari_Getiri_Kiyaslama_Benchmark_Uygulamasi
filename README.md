@@ -200,20 +200,3 @@ Tarih      | Faiz_Orani_Yillik_Pct
 01.01.2023 | 42.5
 ```
 
----
-
-## Wiki
-
-Mimari kararlar, hesaplama yöntemleri ve değişiklik logu `docs/wiki/` içindedir:
-
-| Sayfa | İçerik |
-|-------|--------|
-| `index.md` | Tüm wiki sayfalarına bağlantılar |
-| `mimari.md` | 3-katman sistem tasarımı |
-| `normalizasyon.md` | Başlangıç=100 algoritması, FX yönleri |
-| `maliyet_hesabi.md` | WAC formülü, kısmi satış davranışı |
-| `metrikler.md` | TWRR (Modified Dietz), Brinson katkı analizi |
-| `stack.md` | Teknoloji seçimleri, chart_builder_v2 fonksiyon listesi |
-| `veri_kaynaklari.md` | yfinance sembolleri, TCMB fallback, cache |
-| `depolama.md` | Google Drive yapısı, CSV şemaları |
-| `log.md` | Değişiklik logu |
