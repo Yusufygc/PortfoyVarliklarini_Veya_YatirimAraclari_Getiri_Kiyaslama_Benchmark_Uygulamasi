@@ -28,7 +28,8 @@ def fetch_prices(
             cached_symbols = set(cached.columns.tolist())
             if set(symbols).issubset(cached_symbols):
                 sliced = cached.loc[start:end, symbols]
-                if not sliced.empty:
+                # Cache geçerli: istenen başlangıç tarihini kapsıyor olmalı (7 gün tolerans)
+                if not sliced.empty and sliced.index[0] <= pd.Timestamp(start) + pd.Timedelta(days=7):
                     return sliced
 
     with warnings.catch_warnings():

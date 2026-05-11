@@ -72,6 +72,12 @@ def build_benchmark_series(
     Returns:
         DataFrame: index=Date, columns=symbols, values=normalized index
     """
+    if prices.columns.duplicated().any():
+        prices = prices.loc[:, ~prices.columns.duplicated(keep="first")]
+    if isinstance(fx_usdtry, pd.DataFrame):
+        fx_usdtry = fx_usdtry.iloc[:, 0]
+    fx_usdtry = fx_usdtry[~fx_usdtry.index.duplicated(keep="first")]
+
     result = {}
     date_range = pd.date_range(start_date, end_date, freq="B")
 
