@@ -1,0 +1,72 @@
+BenchmarkTakip — data/ Klasörü Dosya Amaçları
+==============================================
+
+portfolio.csv
+-------------
+Amaç : Portföydeki mevcut pozisyonların statik kaydıdır.
+       Her satır bir alım işlemini temsil eder.
+Kullanım : data_loader.load_portfolio_csv() ile yüklenir.
+           portfolio_engine.compute_wac() maliyet hesabında giriş verisidir.
+Sütunlar:
+  Varlık Adı   — Varlığın kısa adı (SYMBOLS dict ile eşleşmeli; örn. "Altin", "BIST100")
+  Alış Tarihi  — GG.AA.YYYY formatında alım tarihi
+  Alış Fiyatı  — Alım anındaki birim fiyat (TL cinsinden)
+  Miktar       — Alınan birim sayısı (gram, adet, lot vb.)
+  Komisyon     — Ödenen komisyon tutarı (TL); yoksa 0
+Kural : Bir varlık için birden fazla alım satırı olabilir (WAC hesabı için birleştirilir).
+
+transactions.csv
+----------------
+Amaç : Portföyde gerçekleşen tüm işlemlerin zaman sıralı kaydıdır.
+       Hem alım-satım hem de nakit giriş-çıkışlarını içerir.
+Kullanım : data_loader.load_transactions_csv() ile yüklenir.
+           portfolio_engine.compute_twrr() TWRR hesabında nakit akışı tespiti için kullanır.
+           transaction_form widget'ı bu dosyaya yeni satır ekler.
+Sütunlar:
+  Tarih        — GG.AA.YYYY formatında işlem tarihi
+  Varlık Adı   — İşleme konu varlığın adı
+  İşlem Türü   — ALIŞ | SATIŞ | NAKIT_GIRIS | NAKIT_CIKIS
+  Fiyat        — İşlem anındaki birim fiyat (TL)
+  Miktar       — İşlem miktarı (gram, adet vb.)
+  Komisyon     — Ödenen komisyon (TL); yoksa 0
+Kural : Satırlar tarih sırasıyla tutulur (load_transactions_csv otomatik sıralar).
+        NAKIT_GIRIS/NAKIT_CIKIS satırlarında Varlık Adı "NAKİT" olarak girilir.
+
+cpi_turkey.csv
+--------------
+Amaç : TÜİK TÜFE (Tüketici Fiyat Endeksi) aylık verisini saklar.
+       Reel (enflasyona göre düzeltilmiş) getiri hesabında kullanılır.
+Kullanım : data_loader.load_cpi_series() ile yüklenir; günlük frekansta ffill ile genişletilir.
+           benchmark_engine.build_benchmark_series(currency="REAL") TL serisini CPI ile deflate eder.
+Sütunlar:
+  Tarih       — Her ayın 1'i, GG.AA.YYYY formatında (örn. 01.01.2023)
+  CPI_Endeks  — TÜİK zincirlenmiş CPI endeks değeri (baz yıl farketmez, göreceli değişim kullanılır)
+Kural : Değerler monotonik artmalıdır (enflasyon negatif olamaz).
+        Boşluklar load_cpi_series tarafından forward-fill ile doldurulur.
+        Veri kaynağı: https://data.tuik.gov.tr (Tüketici Fiyat Endeksi)
+
+tcmb_rates.csv
+--------------
+Amaç : TCMB politika faiz oranı değişikliklerini saklar.
+       Mevduat (risksiz getiri) benchmark serisinin sentetik olarak üretilmesinde kullanılır.
+Kullanım : data_loader.load_tcmb_rates() ile yüklenir.
+           benchmark_engine.build_deposit_series() bu faiz oranından günlük bileşik faiz eğrisi üretir.
+           Dosya yoksa sabit TCMB_POLICY_RATE_PCT değeri (varsayılan %37) kullanılır (Tier 3 fallback).
+Sütunlar:
+  Tarih                  — Faiz kararının yürürlük tarihi, GG.AA.YYYY formatında
+  Faiz_Orani_Yillik_Pct  — Yıllık politika faizi (% cinsinden; örn. 42.5 = %42,5)
+Kural : Her satır bir karar tarihini temsil eder; aradaki günler load_tcmb_rates tarafından ffill ile doldurulur.
+        Değerler 0-100 arasında olmalıdır.
+        Veri kaynağı: https://www.tcmb.gov.tr (Para Politikası Kararları)
+
+prices_cache.pkl
+----------------
+Amaç : yfinance'ten çekilen fiyat verilerinin geçici pickle cache'idir.
+       Tekrarlı API çağrılarını önler, notebook çalıştırma hızını artırır.
+Kullanım : data_loader.fetch_prices() tarafından otomatik oluşturulur ve okunur.
+           Maksimum yaş: 12 saat. Süresi geçince veya yeni sembol eklenince yenilenir.
+Kural : Manuel düzenleme yapılmamalıdır. Sorun çıkarsa silinebilir — fetch_prices yeniden oluşturur.
+
+cache/ (klasör)
+---------------
+Amaç : Alternatif cache konumu (eski versiyon uyumluluğu için tutulur).
