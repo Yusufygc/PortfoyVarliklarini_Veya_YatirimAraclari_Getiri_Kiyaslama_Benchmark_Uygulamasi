@@ -84,6 +84,21 @@ BenchmarkTakip/
 
 ### Google Colab
 
+GitHub notebook preview dosyayı çalıştırmaz; `ipywidgets` ve interaktif Plotly grafikleri GitHub'da metin temsili olarak görünebilir. Grafikleri görmek için notebook'u Colab'da çalıştırın.
+
+Önerilen akış:
+
+```python
+!git clone https://github.com/KULLANICI_ADINIZ/BenchmarkTakip.git
+%cd BenchmarkTakip
+```
+
+Sonra `BenchmarkKarsilastirma.ipynb` veya `PortfolyoBenchmark.ipynb` dosyasını Colab'da açıp hücreleri sırayla çalıştırın. Notebook'lar repo kökündeki `lib/` klasörünü otomatik bulur. Veri klasörü için öncelik:
+
+1. `PORTFOLIO_DATA_DIR` ortam değişkeni
+2. Colab'da varsa `/content/drive/MyDrive/PortfolioProject/`
+3. Repo içindeki `data/`
+
 Notebook'ların ilk hücresi bağımlılıkları otomatik kurar:
 
 ```python
@@ -103,7 +118,7 @@ from google.colab import drive
 drive.mount("/content/drive")
 ```
 
-Proje dosyaları `/content/drive/MyDrive/PortfolioProject/` konumunda olmalıdır.
+Kalıcı portföy verisi istiyorsanız `transactions.csv`, `cpi_turkey.csv` ve `tcmb_rates.csv` dosyalarını `/content/drive/MyDrive/PortfolioProject/` altında tutun ya da `PORTFOLIO_DATA_DIR` ile farklı bir klasör seçin.
 
 ### Yerel Jupyter
 
@@ -199,4 +214,3 @@ Tarih      | CPI_Endeks
 Tarih      | Faiz_Orani_Yillik_Pct
 01.01.2023 | 42.5
 ```
-
