@@ -255,7 +255,6 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
     _HDR = "color:#89b4fa;font-size:13px;font-weight:bold;margin-bottom:10px;border-bottom:1px solid #313244;padding-bottom:6px;"
     _LABEL_S = "color:#cdd6f4;font-size:13px;font-weight:bold;margin-bottom:8px;"
     _BTN_ROW = widgets.Layout(gap="6px", justify_content="center", width="100%")
-    _DATE_FMT = "color:#6c7086;font-size:10px;margin-left:4px;"
     w_s = {"description_width": "110px"}
     w_l = widgets.Layout(width=_COL_W)
 
@@ -360,16 +359,6 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
             + "<br>".join(errors) + "</div>"
         )
 
-    def _date_fmt_widget(date_picker):
-        """DatePicker yanına GG/AA/YYYY etiket ekler."""
-        lbl = widgets.HTML(value="")
-        def _upd(change=None):
-            if date_picker.value:
-                lbl.value = f'<span style="{_DATE_FMT}">{date_picker.value.strftime("%d/%m/%Y")}</span>'
-        date_picker.observe(_upd, names="value")
-        _upd()
-        return lbl
-
     # ── Sol panel — sabit varlıklar ───────────────────────────────────────────
 
     v_asset_dd = widgets.Dropdown(
@@ -387,7 +376,6 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
-    v_date_lbl = _date_fmt_widget(v_date)
     v_price = widgets.FloatText(description="Fiyat (TL):", value=0.0, style=w_s, layout=w_l)
     v_qty = widgets.FloatText(description="Miktar:", value=1.0, style=w_s, layout=w_l)
     v_comm = widgets.FloatText(description="Komisyon (TL):", value=0.0, style=w_s, layout=w_l)
@@ -432,8 +420,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     left_panel = widgets.VBox([
         widgets.HTML(f'<div style="{_HDR}">📦 Varlık Alım / Satım</div>'),
-        v_asset_dd, v_islem_dd,
-        widgets.VBox([v_date, v_date_lbl]),
+        v_asset_dd, v_islem_dd, v_date,
         v_price, v_qty, v_comm,
         widgets.HBox([v_save, v_clear], layout=_BTN_ROW),
         v_status,
@@ -456,7 +443,6 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
-    h_date_lbl = _date_fmt_widget(h_date)
     h_price = widgets.FloatText(description="Fiyat (TL):", value=0.0, style=w_s, layout=w_l)
     h_lot = widgets.IntText(description="Lot (adet):", value=1, style=w_s, layout=w_l)
     h_comm = widgets.FloatText(description="Komisyon (TL):", value=0.0, style=w_s, layout=w_l)
@@ -518,8 +504,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     mid_panel = widgets.VBox([
         widgets.HTML(f'<div style="{_HDR}">📈 Hisse Alım / Satım</div>'),
-        h_ticker, h_islem_dd,
-        widgets.VBox([h_date, h_date_lbl]),
+        h_ticker, h_islem_dd, h_date,
         h_price, h_lot, h_comm,
         widgets.HBox([h_save, h_clear], layout=_BTN_ROW),
         h_status,
@@ -537,7 +522,6 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
-    s_date_lbl = _date_fmt_widget(s_date)
     s_tutar = widgets.FloatText(description="Tutar (TL):", value=0.0, style=w_s, layout=w_l)
     s_status = widgets.HTML(value="")
     s_save = widgets.Button(description="Kaydet", button_style="success", icon="check",
@@ -581,9 +565,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     right_panel = widgets.VBox([
         widgets.HTML(f'<div style="{_HDR}">💰 Sermaye Yönetimi</div>'),
-        s_islem_dd,
-        widgets.VBox([s_date, s_date_lbl]),
-        s_tutar,
+        s_islem_dd, s_date, s_tutar,
         widgets.HBox([s_save, s_clear], layout=_BTN_ROW),
         s_status,
     ], layout=widgets.Layout(padding="0"))

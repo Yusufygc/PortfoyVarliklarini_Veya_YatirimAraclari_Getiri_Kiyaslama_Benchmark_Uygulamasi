@@ -85,6 +85,9 @@ def load_portfolio_csv(filepath: str) -> pd.DataFrame:
 
 
 def load_transactions_csv(filepath: str) -> pd.DataFrame:
+    import os
+    if not os.path.exists(filepath):
+        return pd.DataFrame(columns=REQUIRED_TRANSACTION_COLS)
     df = pd.read_csv(filepath)
     missing = [c for c in REQUIRED_TRANSACTION_COLS if c not in df.columns]
     if missing:
