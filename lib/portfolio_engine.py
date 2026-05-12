@@ -4,6 +4,13 @@ import numpy as np
 import pandas as pd
 
 
+def _scalar(val) -> float:
+    """Extract scalar from a value that may be a pandas Series (duplicate index)."""
+    if isinstance(val, pd.Series):
+        return float(val.iloc[0])
+    return float(val)
+
+
 def compute_wac(transactions: pd.DataFrame) -> dict:
     """
     Her varlık için Ağırlıklı Ortalama Maliyet ve elde tutulan adet hesaplar.
@@ -52,6 +59,11 @@ def compute_portfolio_value_series(
         DataFrame: index=Date, columns=[total_value_tl, total_value_usd, asset_values_tl, units_held]
     """
     usd_symbols = {"GC=F", "SI=F"}
+
+    # yfinance bazen duplicate index döndürür — deduplicate et
+    prices = prices.loc[~prices.index.duplicated(keep="first")]
+    fx_usdtry = fx_usdtry[~fx_usdtry.index.duplicated(keep="first")]
+
     start_date = transactions["Tarih"].min()
     date_range = pd.date_range(start_date, datetime.today(), freq="B")
 
@@ -102,10 +114,10 @@ def compute_portfolio_value_series(
             if price_date is None:
                 continue
 
-            price = prices[sym].loc[price_date]
+            price = _scalar(prices[sym].loc[price_date])
             if sym in usd_symbols:
                 fx_date = _nearest_price(fx_usdtry, date)
-                fx = fx_usdtry.loc[fx_date] if fx_date else 1.0
+                fx = _scalar(fx_usdtry.loc[fx_date]) if fx_date else 1.0
                 value_tl = price * fx * units
             else:
                 value_tl = price * units
@@ -114,7 +126,7 @@ def compute_portfolio_value_series(
             total_tl += value_tl
 
         fx_today = _nearest_price(fx_usdtry, date)
-        fx_rate = fx_usdtry.loc[fx_today] if fx_today else 1.0
+        fx_rate = _scalar(fx_usdtry.loc[fx_today]) if fx_today else 1.0
         total_usd = total_tl / fx_rate if fx_rate > 0 else 0.0
 
         records.append({
@@ -234,10 +246,10 @@ def compute_asset_contributions(
         if price_end is None:
             continue
 
-        current_price = prices[sym].loc[price_end]
+        current_price = _scalar(prices[sym].loc[price_end])
         if sym in usd_symbols and fx_usdtry is not None:
             fx_date = _nearest_price(fx_usdtry, end_dt)
-            fx = fx_usdtry.loc[fx_date] if fx_date else 1.0
+            fx = _scalar(fx_usdtry.loc[fx_date]) if fx_date else 1.0
             current_price_tl = current_price * fx
             wac_tl = wac  # WAC zaten TL cinsinden saklanır (alış anında çevrilmiş)
         else:
