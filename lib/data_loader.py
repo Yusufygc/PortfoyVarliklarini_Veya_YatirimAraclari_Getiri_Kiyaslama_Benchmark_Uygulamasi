@@ -23,14 +23,21 @@ def fetch_prices(
     if os.path.exists(cache_file):
         age_hours = (datetime.now() - datetime.fromtimestamp(os.path.getmtime(cache_file))).total_seconds() / 3600
         if age_hours < max_cache_age_hours:
-            with open(cache_file, "rb") as f:
-                cached = pickle.load(f)
-            cached_symbols = set(cached.columns.tolist())
-            if set(symbols).issubset(cached_symbols):
-                sliced = cached.loc[start:end, symbols]
-                # Cache geçerli: istenen başlangıç tarihini kapsıyor olmalı (7 gün tolerans)
-                if not sliced.empty and sliced.index[0] <= pd.Timestamp(start) + pd.Timedelta(days=7):
-                    return sliced
+            try:
+                with open(cache_file, "rb") as f:
+                    cached = pickle.load(f)
+                cached_symbols = set(cached.columns.tolist())
+                if set(symbols).issubset(cached_symbols):
+                    sliced = cached.loc[start:end, symbols]
+                    # Cache geçerli: istenen başlangıç tarihini kapsıyor olmalı (7 gün tolerans)
+                    if not sliced.empty and sliced.index[0] <= pd.Timestamp(start) + pd.Timedelta(days=7):
+                        return sliced
+            except Exception as exc:
+                warnings.warn(
+                    f"Fiyat cache okunamadı, yfinance yeniden denenecek: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -62,9 +69,16 @@ def fetch_prices(
 
     os.makedirs(cache_path, exist_ok=True)
     if os.path.exists(cache_file):
-        with open(cache_file, "rb") as f:
-            existing = pickle.load(f)
-        df_filled = pd.concat([existing, df_filled]).groupby(level=0).last()
+        try:
+            with open(cache_file, "rb") as f:
+                existing = pickle.load(f)
+            df_filled = pd.concat([existing, df_filled]).groupby(level=0).last()
+        except Exception as exc:
+            warnings.warn(
+                f"Mevcut fiyat cache birleştirilemedi, yeni cache yazılacak: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
 
     with open(cache_file, "wb") as f:
         pickle.dump(df_filled, f)
@@ -136,10 +150,9 @@ def load_tcmb_rates(filepath: str, policy_rate_pct: float = None) -> pd.Series:
     if policy_rate_pct is None:
         raise ValueError("tcmb_rates.csv bulunamadı ve policy_rate_pct verilmedi.")
 
-    # Sabit oran → günlük bileşik faiz endeksi (başlangıç=100)
+    # Sabit oran -> günlük yıllık faiz oranı serisi.
+    # Endeks üretimi build_deposit_series() içinde yapılır.
     start_dt = datetime(2015, 1, 1)
     end_dt = datetime.today()
-    daily_rate = (1 + policy_rate_pct / 100) ** (1 / 365) - 1
     days = pd.date_range(start_dt, end_dt, freq="D")
-    values = 100 * (1 + daily_rate) ** range(len(days))
-    return pd.Series(values, index=days, name="Mevduat_Endeks")
+    return pd.Series(policy_rate_pct, index=days, name="Faiz_Orani_Yillik_Pct")

@@ -5,6 +5,46 @@ import ipywidgets as widgets
 from IPython.display import display
 
 
+DATE_DISPLAY_FORMAT = "%d/%m/%Y"
+
+
+def _coerce_date(value):
+    if hasattr(value, "date"):
+        return value.date()
+    return value
+
+
+def _format_date_display(value) -> str:
+    return _coerce_date(value).strftime(DATE_DISPLAY_FORMAT)
+
+
+def _create_date_text(description="Tarih:", value=None, style=None, layout=None):
+    kwargs = {
+        "description": description,
+        "value": _format_date_display(value or datetime.today()),
+        "placeholder": "GG/AA/YYYY",
+        "style": style or {},
+    }
+    if layout is not None:
+        kwargs["layout"] = layout
+    return widgets.Text(**kwargs)
+
+
+def _parse_date_input(widget: widgets.Text):
+    try:
+        parsed = datetime.strptime(widget.value.strip(), DATE_DISPLAY_FORMAT).date()
+    except ValueError as exc:
+        raise ValueError(f"{widget.description} GG/AA/YYYY formatinda olmali.") from exc
+
+    min_date = getattr(widget, "_min_date", None)
+    max_date = getattr(widget, "_max_date", None)
+    if min_date and parsed < min_date:
+        raise ValueError(f"{widget.description} en erken {_format_date_display(min_date)} olabilir.")
+    if max_date and parsed > max_date:
+        raise ValueError(f"{widget.description} en gec {_format_date_display(max_date)} olabilir.")
+    return parsed
+
+
 def create_date_range_picker(
     min_date: datetime,
     max_date: datetime,
@@ -14,22 +54,25 @@ def create_date_range_picker(
     style = {"description_width": "80px"}
     layout = widgets.Layout(width="200px")
 
-    start_picker = widgets.DatePicker(
+    start_picker = widgets.Text(
         description="Başlangıç:",
-        value=default_start.date(),
-        min=min_date.date(),
-        max=max_date.date(),
+        value=_format_date_display(default_start),
+        placeholder="GG/AA/YYYY",
         style=style,
         layout=layout,
     )
-    end_picker = widgets.DatePicker(
+    start_picker._min_date = _coerce_date(min_date)
+    start_picker._max_date = _coerce_date(max_date)
+
+    end_picker = widgets.Text(
         description="Bitiş:",
-        value=default_end.date(),
-        min=min_date.date(),
-        max=max_date.date(),
+        value=_format_date_display(default_end),
+        placeholder="GG/AA/YYYY",
         style=style,
         layout=layout,
     )
+    end_picker._min_date = _coerce_date(min_date)
+    end_picker._max_date = _coerce_date(max_date)
     return start_picker, end_picker
 
 
@@ -58,10 +101,20 @@ def wire_dashboard(
     def _on_change(change):
         if change["name"] != "value":
             return
-        start = datetime.combine(start_picker.value, datetime.min.time())
-        end = datetime.combine(end_picker.value, datetime.min.time())
-        if start >= end:
+        try:
+            start_date_value = _parse_date_input(start_picker)
+            end_date_value = _parse_date_input(end_picker)
+            start = datetime.combine(start_date_value, datetime.min.time())
+            end = datetime.combine(end_date_value, datetime.min.time())
+            if start >= end:
+                raise ValueError("Başlangıç tarihi bitiş tarihinden önce olmalı.")
+        except ValueError as exc:
+            status_html.value = (
+                '<div style="color:#f38ba8;font-size:12px;padding:2px 0;">'
+                f"{exc}</div>"
+            )
             return
+        status_html.value = ""
         currency = currency_toggle.value
         with output_widget:
             output_widget.clear_output(wait=True)
@@ -79,7 +132,8 @@ def wire_dashboard(
         [start_picker, end_picker, currency_toggle],
         layout=widgets.Layout(align_items="center", gap="16px", padding="8px 0"),
     )
-    return widgets.VBox([controls, output_widget])
+    status_html = widgets.HTML(value="")
+    return widgets.VBox([controls, status_html, output_widget])
 
 
 def create_transaction_form(
@@ -109,9 +163,8 @@ def create_transaction_form(
         description="İşlem Türü:",
         style=w_style, layout=w_layout,
     )
-    date_picker = widgets.DatePicker(
+    date_picker = _create_date_text(
         description="Tarih:",
-        value=datetime.today().date(),
         style=w_style, layout=w_layout,
     )
     price_input = widgets.FloatText(
@@ -158,8 +211,10 @@ def create_transaction_form(
 
     def _on_save(_):
         errors = []
-        if not date_picker.value:
-            errors.append("Tarih boş olamaz.")
+        try:
+            tarih = _parse_date_input(date_picker)
+        except ValueError as e:
+            errors.append(str(e))
         if price_input.value <= 0:
             errors.append("Fiyat 0'dan büyük olmalı.")
         if qty_input.value <= 0:
@@ -175,7 +230,7 @@ def create_transaction_form(
 
         try:
             new_row = pd.DataFrame([{
-                "Tarih": date_picker.value.strftime("%d.%m.%Y"),
+                "Tarih": tarih.strftime("%d.%m.%Y"),
                 "Varlık Adı": asset_dd.value,
                 "İşlem Türü": islem_dd.value,
                 "Fiyat": price_input.value,
@@ -205,7 +260,7 @@ def create_transaction_form(
         price_input.value = 0.0
         qty_input.value = 1.0
         comm_input.value = 0.0
-        date_picker.value = datetime.today().date()
+        date_picker.value = _format_date_display(datetime.today())
         status_html.value = ""
 
     save_btn.on_click(_on_save)

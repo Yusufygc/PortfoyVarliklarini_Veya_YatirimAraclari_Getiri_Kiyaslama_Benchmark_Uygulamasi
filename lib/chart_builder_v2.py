@@ -15,6 +15,41 @@ BENCHMARK_COLORS = [
 PORTFOLIO_COLOR = "#E63946"
 GAIN_COLOR = "#2DC653"
 LOSS_COLOR = "#E63946"
+TURKISH_MONTHS = [
+    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+]
+
+
+def format_turkish_date(value) -> str:
+    ts = pd.Timestamp(value)
+    return f"{ts.day:02d} {TURKISH_MONTHS[ts.month - 1]} {ts.year}"
+
+
+def format_turkish_period(value, freq: str) -> str:
+    ts = pd.Timestamp(value)
+    if freq == "ME":
+        return f"{TURKISH_MONTHS[ts.month - 1]} {ts.year}"
+    quarter = ((ts.month - 1) // 3) + 1
+    return f"{quarter}. Çeyrek {ts.year}"
+
+
+def _apply_turkish_month_axis(fig: go.Figure, dates) -> None:
+    idx = pd.DatetimeIndex(pd.to_datetime(dates)).dropna()
+    if idx.empty:
+        return
+    start = idx.min().replace(day=1)
+    end = idx.max().replace(day=1)
+    ticks = pd.date_range(start, end, freq="MS")
+    if len(ticks) == 0:
+        return
+    step = max(1, len(ticks) // 12)
+    ticks = ticks[::step]
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=ticks,
+        ticktext=[f"{TURKISH_MONTHS[t.month - 1]} {t.year}" for t in ticks],
+    )
 
 
 def build_performance_line_chart_v2(
@@ -35,6 +70,10 @@ def build_performance_line_chart_v2(
     for i, col in enumerate(benchmark_series.columns):
         s = benchmark_series[col].dropna()
         color = BENCHMARK_COLORS[i % len(BENCHMARK_COLORS)]
+        customdata = pd.DataFrame({
+            "date": [format_turkish_date(d) for d in s.index],
+            "ret": (s.values - 100).round(2),
+        }).values
         fig.add_trace(go.Scatter(
             x=s.index,
             y=s.values,
@@ -44,15 +83,19 @@ def build_performance_line_chart_v2(
             legendgroup=col,
             hovertemplate=(
                 f"<b>{col}</b><br>"
-                "Tarih: %{x|%d.%m.%Y}<br>"
+                "Tarih: %{customdata[0]}<br>"
                 f"Değer: %{{y:.1f}} ({currency_label})<br>"
-                "Başlangıçtan: %{customdata:+.2f}%<extra></extra>"
+                "Başlangıçtan: %{customdata[1]:+.2f}%<extra></extra>"
             ),
-            customdata=((s.values - 100).round(2)),
+            customdata=customdata,
         ))
 
     if portfolio_series is not None:
         p = portfolio_series.dropna()
+        customdata = pd.DataFrame({
+            "date": [format_turkish_date(d) for d in p.index],
+            "ret": (p.values - 100).round(2),
+        }).values
         fig.add_trace(go.Scatter(
             x=p.index,
             y=p.values,
@@ -62,11 +105,11 @@ def build_performance_line_chart_v2(
             legendgroup="Portföy",
             hovertemplate=(
                 "<b>Portföy</b><br>"
-                "Tarih: %{x|%d.%m.%Y}<br>"
+                "Tarih: %{customdata[0]}<br>"
                 f"Değer: %{{y:.1f}} ({currency_label})<br>"
-                "Başlangıçtan: %{customdata:+.2f}%<extra></extra>"
+                "Başlangıçtan: %{customdata[1]:+.2f}%<extra></extra>"
             ),
-            customdata=((p.values - 100).round(2)),
+            customdata=customdata,
         ))
 
     fig.add_hline(
@@ -103,6 +146,10 @@ def build_performance_line_chart_v2(
         template="plotly_dark",
         height=580,
     )
+    all_dates = benchmark_series.index
+    if portfolio_series is not None:
+        all_dates = all_dates.union(portfolio_series.index)
+    _apply_turkish_month_axis(fig, all_dates)
     return fig
 
 
@@ -131,6 +178,7 @@ def build_rolling_returns_chart(
             s = series_df[col].dropna()
             rolling_ret = (s / s.shift(window) - 1) * 100
             color = all_colors[col_idx % len(all_colors)]
+            customdata = [format_turkish_date(d) for d in rolling_ret.index]
 
             fig.add_trace(go.Scatter(
                 x=rolling_ret.index,
@@ -141,9 +189,10 @@ def build_rolling_returns_chart(
                 legendgroup=col,
                 hovertemplate=(
                     f"<b>{col}</b><br>"
-                    "Tarih: %{x|%d.%m.%Y}<br>"
+                    "Tarih: %{customdata}<br>"
                     f"{window}g Getiri: %{{y:+.1f}}%<extra></extra>"
                 ),
+                customdata=customdata,
             ), row=row_idx, col=1)
 
         fig.add_hline(y=0, line=dict(color="#6c7086", width=1, dash="dot"), row=row_idx, col=1)
@@ -156,6 +205,7 @@ def build_rolling_returns_chart(
         height=380 * len(windows),
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
     )
+    _apply_turkish_month_axis(fig, series_df.index)
     return fig
 
 
@@ -172,6 +222,7 @@ def build_drawdown_chart(series_df: pd.DataFrame) -> go.Figure:
         drawdown = (s - s.cummax()) / s.cummax() * 100
         color = all_colors[col_idx % len(all_colors)]
         is_portfolio = (col == "Portföy")
+        customdata = [format_turkish_date(d) for d in drawdown.index]
 
         fig.add_trace(go.Scatter(
             x=drawdown.index,
@@ -183,9 +234,10 @@ def build_drawdown_chart(series_df: pd.DataFrame) -> go.Figure:
             opacity=1.0 if is_portfolio else 0.7,
             hovertemplate=(
                 f"<b>{col}</b><br>"
-                "Tarih: %{x|%d.%m.%Y}<br>"
+                "Tarih: %{customdata}<br>"
                 "Drawdown: %{y:.1f}%<extra></extra>"
             ),
+            customdata=customdata,
         ))
 
     fig.add_hline(y=0, line=dict(color="#6c7086", width=1, dash="dot"))
@@ -199,6 +251,7 @@ def build_drawdown_chart(series_df: pd.DataFrame) -> go.Figure:
         height=450,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+    _apply_turkish_month_axis(fig, series_df.index)
     return fig
 
 
@@ -253,7 +306,7 @@ def build_period_bar_chart(
         color = all_colors[col_idx % len(all_colors)]
 
         fig.add_trace(go.Bar(
-            x=s.index.strftime("%b %Y" if freq == "ME" else "Q%q %Y"),
+            x=[format_turkish_period(d, freq) for d in s.index],
             y=s.values.round(2),
             name=col,
             marker_color=color,

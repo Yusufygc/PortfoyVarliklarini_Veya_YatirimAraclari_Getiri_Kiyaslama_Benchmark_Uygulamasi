@@ -243,29 +243,36 @@ def compute_asset_contributions(
     for asset, state in wac_state.items():
         units = state["units"]
         wac = state["wac"]
+        realized_pnl = state.get("realized_pnl", 0.0)
         sym = symbol_map.get(asset)
-        if sym is None or units <= 0:
+        if sym is None and units > 0:
             continue
 
-        price_end = _nearest_price(prices[sym], end_dt) if sym in prices.columns else None
-        if price_end is None:
+        value_tl = 0.0
+        cost_tl = 0.0
+        if units > 0:
+            price_end = _nearest_price(prices[sym], end_dt) if sym in prices.columns else None
+            if price_end is None:
+                continue
+
+            current_price = _scalar(prices[sym].loc[price_end])
+            if sym in usd_symbols and fx_usdtry is not None:
+                fx_date = _nearest_price(fx_usdtry, end_dt)
+                fx = _scalar(fx_usdtry.loc[fx_date]) if fx_date else 1.0
+                current_price_tl = current_price * fx
+                if sym in GRAM_SYMBOLS:
+                    current_price_tl /= TROY_OZ_TO_GRAM
+                wac_tl = wac  # WAC zaten TL/gram cinsinden saklanır (alış anında kullanıcı gram fiyatı girer)
+            else:
+                current_price_tl = current_price
+                wac_tl = wac
+
+            value_tl = current_price_tl * units
+            cost_tl = wac_tl * units
+        elif realized_pnl == 0:
             continue
 
-        current_price = _scalar(prices[sym].loc[price_end])
-        if sym in usd_symbols and fx_usdtry is not None:
-            fx_date = _nearest_price(fx_usdtry, end_dt)
-            fx = _scalar(fx_usdtry.loc[fx_date]) if fx_date else 1.0
-            current_price_tl = current_price * fx
-            if sym in GRAM_SYMBOLS:
-                current_price_tl /= TROY_OZ_TO_GRAM
-            wac_tl = wac  # WAC zaten TL/gram cinsinden saklanır (alış anında kullanıcı gram fiyatı girer)
-        else:
-            current_price_tl = current_price
-            wac_tl = wac
-
-        value_tl = current_price_tl * units
-        cost_tl = wac_tl * units
-        pnl_tl = value_tl - cost_tl
+        pnl_tl = value_tl - cost_tl + realized_pnl
         pnl_pct = (pnl_tl / cost_tl * 100) if cost_tl > 0 else 0.0
         total_portfolio_value += value_tl
 
@@ -280,7 +287,7 @@ def compute_asset_contributions(
         return pd.DataFrame(columns=["Varlık Adı", "pnl_tl", "pnl_pct", "weight_pct", "contribution_pct"])
 
     df = pd.DataFrame(rows)
-    df["weight_pct"] = df["value_tl"] / total_portfolio_value * 100
+    df["weight_pct"] = df["value_tl"] / total_portfolio_value * 100 if total_portfolio_value > 0 else 0.0
     df["contribution_pct"] = df["weight_pct"] / 100 * df["pnl_pct"]
     return df.drop(columns=["value_tl"]).sort_values("contribution_pct", ascending=False).reset_index(drop=True)
 

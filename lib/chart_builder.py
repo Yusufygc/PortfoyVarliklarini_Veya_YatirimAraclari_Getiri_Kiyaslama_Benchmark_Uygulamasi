@@ -13,6 +13,33 @@ BENCHMARK_COLORS = [
 PORTFOLIO_COLOR = "#E63946"
 GAIN_COLOR = "#2DC653"
 LOSS_COLOR = "#E63946"
+TURKISH_MONTHS = [
+    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+]
+
+
+def format_turkish_date(value) -> str:
+    ts = pd.Timestamp(value)
+    return f"{ts.day:02d} {TURKISH_MONTHS[ts.month - 1]} {ts.year}"
+
+
+def _apply_turkish_month_axis(fig: go.Figure, dates) -> None:
+    idx = pd.DatetimeIndex(pd.to_datetime(dates)).dropna()
+    if idx.empty:
+        return
+    start = idx.min().replace(day=1)
+    end = idx.max().replace(day=1)
+    ticks = pd.date_range(start, end, freq="MS")
+    if len(ticks) == 0:
+        return
+    step = max(1, len(ticks) // 12)
+    ticks = ticks[::step]
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=ticks,
+        ticktext=[f"{TURKISH_MONTHS[t.month - 1]} {t.year}" for t in ticks],
+    )
 
 
 def build_performance_line_chart(
@@ -33,6 +60,10 @@ def build_performance_line_chart(
     for i, col in enumerate(benchmark_series.columns):
         s = benchmark_series[col].dropna()
         color = BENCHMARK_COLORS[i % len(BENCHMARK_COLORS)]
+        customdata = pd.DataFrame({
+            "date": [format_turkish_date(d) for d in s.index],
+            "ret": s.values - 100,
+        }).values
         fig.add_trace(go.Scatter(
             x=s.index,
             y=s.values,
@@ -41,16 +72,20 @@ def build_performance_line_chart(
             opacity=0.6,
             hovertemplate=(
                 f"<b>{col}</b><br>"
-                "Tarih: %{x|%d.%m.%Y}<br>"
+                "Tarih: %{customdata[0]}<br>"
                 f"Değer: %{{y:.1f}} ({currency_label})<br>"
-                "Başlangıçtan: %{customdata:.1f}%<extra></extra>"
+                "Başlangıçtan: %{customdata[1]:.1f}%<extra></extra>"
             ),
-            customdata=(s.values - 100),
+            customdata=customdata,
         ))
 
     # Portföy üste (opsiyonel)
     if portfolio_series is not None:
         p = portfolio_series.dropna()
+        customdata = pd.DataFrame({
+            "date": [format_turkish_date(d) for d in p.index],
+            "ret": p.values - 100,
+        }).values
         fig.add_trace(go.Scatter(
             x=p.index,
             y=p.values,
@@ -59,11 +94,11 @@ def build_performance_line_chart(
             opacity=1.0,
             hovertemplate=(
                 "<b>Portföy</b><br>"
-                "Tarih: %{x|%d.%m.%Y}<br>"
+                "Tarih: %{customdata[0]}<br>"
                 f"Değer: %{{y:.1f}} ({currency_label})<br>"
-                "Başlangıçtan: %{customdata:.1f}%<extra></extra>"
+                "Başlangıçtan: %{customdata[1]:.1f}%<extra></extra>"
             ),
-            customdata=(p.values - 100),
+            customdata=customdata,
         ))
 
     fig.update_layout(
@@ -75,6 +110,10 @@ def build_performance_line_chart(
         template="plotly_dark",
         height=500,
     )
+    all_dates = benchmark_series.index
+    if portfolio_series is not None:
+        all_dates = all_dates.union(portfolio_series.index)
+    _apply_turkish_month_axis(fig, all_dates)
     return fig
 
 

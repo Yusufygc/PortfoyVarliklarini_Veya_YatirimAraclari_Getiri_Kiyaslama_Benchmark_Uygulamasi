@@ -20,6 +20,53 @@ from benchmark_engine import TROY_OZ_TO_GRAM, GRAM_SYMBOLS
 STOCK_SUFFIX = ".IS"       # yfinance BIST suffix
 NAKIT_TYPES = {"NAKIT_GIRIS", "NAKIT_CIKIS"}
 LOT_ASSETS = {"BIST100"}   # v2 backward compat
+DATE_DISPLAY_FORMAT = "%d/%m/%Y"
+
+
+def _coerce_date(value):
+    if hasattr(value, "date"):
+        return value.date()
+    return value
+
+
+def _format_date_display(value) -> str:
+    return _coerce_date(value).strftime(DATE_DISPLAY_FORMAT)
+
+
+def _create_date_text(description="Tarih:", value=None, style=None, layout=None):
+    kwargs = {
+        "description": description,
+        "value": _format_date_display(value or datetime.today()),
+        "placeholder": "GG/AA/YYYY",
+        "style": style or {},
+    }
+    if layout is not None:
+        kwargs["layout"] = layout
+    return widgets.Text(**kwargs)
+
+
+def _parse_date_input(widget):
+    try:
+        parsed = datetime.strptime(widget.value.strip(), DATE_DISPLAY_FORMAT).date()
+    except ValueError as exc:
+        raise ValueError(f"{widget.description} GG/AA/YYYY formatinda olmali.") from exc
+
+    min_date = getattr(widget, "_min_date", None)
+    max_date = getattr(widget, "_max_date", None)
+    if min_date and parsed < min_date:
+        raise ValueError(f"{widget.description} en erken {_format_date_display(min_date)} olabilir.")
+    if max_date and parsed > max_date:
+        raise ValueError(f"{widget.description} en gec {_format_date_display(max_date)} olabilir.")
+    return parsed
+
+
+def _series_value_at_or_before(series: pd.Series, date: pd.Timestamp, default=None):
+    if series is None or len(series) == 0:
+        return default
+    price_date = _nearest_price(series, date)
+    if price_date is None:
+        return default
+    return _scalar(series.loc[price_date])
 
 
 # ── Business logic ────────────────────────────────────────────────────────────
@@ -375,9 +422,8 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         description="İşlem:",
         style=w_s, layout=w_l,
     )
-    v_date = widgets.DatePicker(
+    v_date = _create_date_text(
         description="Tarih:",
-        value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
     v_price = widgets.FloatText(description="Fiyat (TL):", value=0.0, style=w_s, layout=w_l)
@@ -404,8 +450,10 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     def _v_save(_):
         errs = []
-        if not v_date.value:
-            errs.append("Tarih boş.")
+        try:
+            tarih = _parse_date_input(v_date)
+        except ValueError as e:
+            errs.append(str(e))
         if v_price.value <= 0:
             errs.append("Fiyat > 0 olmalı.")
         if v_qty.value <= 0:
@@ -420,7 +468,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
             _show_errors(biz, v_status)
             return
         try:
-            _save_row(v_asset_dd.value, v_islem_dd.value, v_date.value,
+            _save_row(v_asset_dd.value, v_islem_dd.value, tarih,
                       v_price.value, v_qty.value, v_comm.value, v_status)
         except Exception as e:
             _show_errors([str(e)], v_status)
@@ -429,7 +477,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         v_price.value = 0.0
         v_qty.value = 1.0
         v_comm.value = 0.0
-        v_date.value = datetime.today().date()
+        v_date.value = _format_date_display(datetime.today())
         v_status.value = ""
 
     v_save.on_click(_v_save)
@@ -455,9 +503,8 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         description="İşlem:",
         style=w_s, layout=w_l,
     )
-    h_date = widgets.DatePicker(
+    h_date = _create_date_text(
         description="Tarih:",
-        value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
     h_price = widgets.FloatText(description="Fiyat (TL):", value=0.0, style=w_s, layout=w_l)
@@ -477,8 +524,10 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         errs = []
         if not ticker:
             errs.append("Hisse sembolü boş olamaz.")
-        if not h_date.value:
-            errs.append("Tarih boş.")
+        try:
+            tarih = _parse_date_input(h_date)
+        except ValueError as e:
+            errs.append(str(e))
         if h_price.value <= 0:
             errs.append("Fiyat > 0 olmalı.")
         if h_lot.value <= 0:
@@ -503,7 +552,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
             _show_errors(biz, h_status)
             return
         try:
-            _save_row(ticker, h_islem_dd.value, h_date.value,
+            _save_row(ticker, h_islem_dd.value, tarih,
                       h_price.value, float(h_lot.value), h_comm.value, h_status)
         except Exception as e:
             _show_errors([str(e)], h_status)
@@ -513,7 +562,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         h_price.value = 0.0
         h_lot.value = 1
         h_comm.value = 0.0
-        h_date.value = datetime.today().date()
+        h_date.value = _format_date_display(datetime.today())
         h_status.value = ""
 
     h_save.on_click(_h_save)
@@ -534,9 +583,8 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         description="İşlem:",
         style=w_s, layout=w_l,
     )
-    s_date = widgets.DatePicker(
+    s_date = _create_date_text(
         description="Tarih:",
-        value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
     s_tutar = widgets.FloatText(description="Tutar (TL):", value=0.0, style=w_s, layout=w_l)
@@ -550,8 +598,10 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         if s_tutar.value <= 0:
             _show_errors(["Tutar > 0 olmalı."], s_status)
             return
-        if not s_date.value:
-            _show_errors(["Tarih boş."], s_status)
+        try:
+            tarih = _parse_date_input(s_date)
+        except ValueError as e:
+            _show_errors([str(e)], s_status)
             return
 
         islem = s_islem_dd.value
@@ -563,7 +613,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
                 return
 
         try:
-            _save_row("NAKIT", islem, s_date.value, s_tutar.value, 1.0, 0.0, s_status)
+            _save_row("NAKIT", islem, tarih, s_tutar.value, 1.0, 0.0, s_status)
             s_status.value = (
                 '<div style="color:#a6e3a1;font-size:12px;margin-top:6px;">'
                 f"✓ {('Yatırıldı' if islem == 'NAKIT_GIRIS' else 'Çekildi')}: ₺{s_tutar.value:,.2f}"
@@ -574,7 +624,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     def _s_clear(_):
         s_tutar.value = 0.0
-        s_date.value = datetime.today().date()
+        s_date.value = _format_date_display(datetime.today())
         s_status.value = ""
 
     s_save.on_click(_s_save)
@@ -710,8 +760,7 @@ def create_transaction_form_v2(asset_names, transactions_path, on_save_callback=
                  ("Para Yatır (NAKIT_GIRIS)", "NAKIT_GIRIS"), ("Para Çek (NAKIT_CIKIS)", "NAKIT_CIKIS")],
         description="İşlem Türü:", style=w_style, layout=w_layout,
     )
-    date_picker = widgets.DatePicker(description="Tarih:", value=datetime.today().date(),
-                                     style=w_style, layout=w_layout)
+    date_picker = _create_date_text(description="Tarih:", style=w_style, layout=w_layout)
     price_input = widgets.FloatText(description="Fiyat (TL):", value=0.0, style=w_style, layout=w_layout)
     qty_float = widgets.FloatText(description="Miktar:", value=1.0, style=w_style, layout=w_layout)
     qty_int = widgets.IntText(description="Miktar (lot):", value=1, style=w_style, layout=w_layout)
@@ -776,8 +825,10 @@ def create_transaction_form_v2(asset_names, transactions_path, on_save_callback=
     def _on_save(_):
         import os
         errs = []
-        if not date_picker.value:
-            errs.append("Tarih boş olamaz.")
+        try:
+            tarih = _parse_date_input(date_picker)
+        except ValueError as e:
+            errs.append(str(e))
         if price_input.value <= 0:
             errs.append("Fiyat 0'dan büyük olmalı.")
         miktar = _get_miktar()
@@ -792,7 +843,7 @@ def create_transaction_form_v2(asset_names, transactions_path, on_save_callback=
             status_html.value = '<div style="color:#f38ba8;font-size:12px;margin-top:6px;">' + "<br>".join(biz) + "</div>"
             return
         try:
-            new_row = pd.DataFrame([{"Tarih": date_picker.value.strftime("%d.%m.%Y"), "Varlık Adı": asset_dd.value,
+            new_row = pd.DataFrame([{"Tarih": tarih.strftime("%d.%m.%Y"), "Varlık Adı": asset_dd.value,
                                      "İşlem Türü": islem_dd.value, "Fiyat": price_input.value,
                                      "Miktar": miktar, "Komisyon": comm_input.value}])
             new_row.to_csv(transactions_path, mode="a", header=not os.path.exists(transactions_path), index=False)
@@ -812,7 +863,7 @@ def create_transaction_form_v2(asset_names, transactions_path, on_save_callback=
         qty_float.value = 1.0
         qty_int.value = 1
         comm_input.value = 0.0
-        date_picker.value = datetime.today().date()
+        date_picker.value = _format_date_display(datetime.today())
         status_html.value = ""
 
     save_btn.on_click(_on_save)
@@ -839,14 +890,25 @@ def create_transaction_form_v2(asset_names, transactions_path, on_save_callback=
 def create_date_range_picker(min_date, max_date, default_start, default_end):
     style = {"description_width": "80px"}
     layout = widgets.Layout(width="200px")
-    start_picker = widgets.DatePicker(
-        description="Başlangıç:", value=default_start.date(),
-        min=min_date.date(), max=max_date.date(), style=style, layout=layout,
+    start_picker = widgets.Text(
+        description="Başlangıç:",
+        value=_format_date_display(default_start),
+        placeholder="GG/AA/YYYY",
+        style=style,
+        layout=layout,
     )
-    end_picker = widgets.DatePicker(
-        description="Bitiş:", value=default_end.date(),
-        min=min_date.date(), max=max_date.date(), style=style, layout=layout,
+    start_picker._min_date = _coerce_date(min_date)
+    start_picker._max_date = _coerce_date(max_date)
+
+    end_picker = widgets.Text(
+        description="Bitiş:",
+        value=_format_date_display(default_end),
+        placeholder="GG/AA/YYYY",
+        style=style,
+        layout=layout,
     )
+    end_picker._min_date = _coerce_date(min_date)
+    end_picker._max_date = _coerce_date(max_date)
     return start_picker, end_picker
 
 
@@ -863,10 +925,20 @@ def wire_dashboard(render_fn, output_widget, start_picker, end_picker, currency_
     def _on_change(change):
         if change["name"] != "value":
             return
-        start = datetime.combine(start_picker.value, datetime.min.time())
-        end = datetime.combine(end_picker.value, datetime.min.time())
-        if start >= end:
+        try:
+            start_date_value = _parse_date_input(start_picker)
+            end_date_value = _parse_date_input(end_picker)
+            start = datetime.combine(start_date_value, datetime.min.time())
+            end = datetime.combine(end_date_value, datetime.min.time())
+            if start >= end:
+                raise ValueError("Başlangıç tarihi bitiş tarihinden önce olmalı.")
+        except ValueError as exc:
+            status_html.value = (
+                '<div style="color:#f38ba8;font-size:12px;padding:2px 0;">'
+                f"{exc}</div>"
+            )
             return
+        status_html.value = ""
         currency = currency_toggle.value
         with output_widget:
             output_widget.clear_output(wait=True)
@@ -884,7 +956,8 @@ def wire_dashboard(render_fn, output_widget, start_picker, end_picker, currency_
         [start_picker, end_picker, currency_toggle],
         layout=widgets.Layout(align_items="center", gap="16px", padding="8px 0"),
     )
-    return widgets.VBox([controls, output_widget])
+    status_html = widgets.HTML(value="")
+    return widgets.VBox([controls, status_html, output_widget])
 
 
 # ── Portfolio Performance Index ───────────────────────────────────────────────
@@ -893,49 +966,91 @@ def compute_portfolio_performance_index(
     portfolio_values: pd.DataFrame,
     transactions: pd.DataFrame,
     currency: str = "TL",
+    fx_usdtry: pd.Series = None,
+    cpi_series: pd.Series = None,
 ) -> pd.Series:
     """
-    Net Değer / Kümülatif Mevduat × 100.
+    Alım/satım akışından arındırılmış portföy varlık performans endeksi.
 
-    Net Değer  = varlık değeri + nakit bakiye (her gün sonu)
-    Mevduat    = kümülatif NAKIT_GIRIS - NAKIT_CIKIS (net yatırılan sermaye)
+    Varlık değeri = eldeki pozisyonların piyasa değeri.
+    Günlük getiri = (bugünkü varlık değeri - dünkü varlık değeri - alım/satım akışı) / dünkü varlık değeri.
+    NAKIT_GIRIS/NAKIT_CIKIS performansı etkilemez; bunlar sadece nakit bakiyesi yönetimidir.
+    USD/REAL modlarında hem varlık değeri hem alım/satım akışları aynı baz para birimine çevrilir.
 
-    Returns: pd.Series index=portfolio_values.index, values=index başlangıç~100
+    Returns: pd.Series index=portfolio_values.index, values=index başlangıç=100
     """
-    value_col = "total_value_tl" if currency != "USD" else "total_value_usd"
+    if portfolio_values is None or len(portfolio_values) == 0:
+        return pd.Series(dtype=float, name="Portföy")
+
+    if currency == "USD" and (fx_usdtry is None or len(fx_usdtry) == 0):
+        raise ValueError("USD portföy performansı için fx_usdtry gerekli.")
+    if currency == "REAL" and (cpi_series is None or len(cpi_series) == 0):
+        raise ValueError("REAL portföy performansı için cpi_series gerekli.")
+
+    value_col = "total_value_usd" if currency == "USD" else "total_value_tl"
+    base_date = pd.Timestamp(portfolio_values.index[0])
+    cpi_base = _series_value_at_or_before(cpi_series, base_date, 1.0) if currency == "REAL" else 1.0
+
+    def _cpi_factor(date):
+        cpi = _series_value_at_or_before(cpi_series, pd.Timestamp(date), cpi_base)
+        return cpi / cpi_base if cpi_base else 1.0
+
+    def _flow_value(amount_tl, date):
+        if currency == "USD":
+            fx = _series_value_at_or_before(fx_usdtry, pd.Timestamp(date), None)
+            if not fx:
+                raise ValueError(f"{date} için USDTRY bulunamadı.")
+            return amount_tl / fx
+        if currency == "REAL":
+            return amount_tl / _cpi_factor(date)
+        return amount_tl
 
     tx_sorted = transactions.sort_values("Tarih").reset_index(drop=True)
     tx_list = tx_sorted
     n_tx = len(tx_list)
     tx_idx = 0
 
-    cash = 0.0
-    deposits = 0.0  # kümülatif net yatırım (NAKIT_GIRIS - NAKIT_CIKIS)
-
-    result = {}
+    asset_values = {}
+    external_flows = {}
 
     for date in portfolio_values.index:
-        # O tarihe kadar gerçekleşen işlemleri işle
+        flow_for_date = 0.0
+
+        # Bu tarihte gerçekleşen alım/satım akışlarını performanstan ayrıştır.
         while tx_idx < n_tx and tx_list.loc[tx_idx, "Tarih"] <= date:
             row = tx_list.loc[tx_idx]
             t = row["İşlem Türü"]
             fiyat = float(row["Fiyat"])
             miktar = float(row["Miktar"])
             komisyon = float(row["Komisyon"])
-            if t == "NAKIT_GIRIS":
-                cash += fiyat * miktar
-                deposits += fiyat * miktar
-            elif t == "NAKIT_CIKIS":
-                cash -= fiyat * miktar
-                deposits -= fiyat * miktar
-            elif t == "ALIŞ":
-                cash -= fiyat * miktar + komisyon
+            if t == "ALIŞ":
+                flow_for_date += _flow_value(fiyat * miktar + komisyon, row["Tarih"])
             elif t == "SATIŞ":
-                cash += fiyat * miktar - komisyon
+                flow_for_date -= _flow_value(fiyat * miktar - komisyon, row["Tarih"])
             tx_idx += 1
 
         asset_value = portfolio_values.loc[date, value_col]
-        net_worth = asset_value + cash
-        result[date] = (net_worth / deposits * 100) if deposits > 0 else float("nan")
+        if currency == "REAL":
+            asset_value = asset_value / _cpi_factor(date)
+        asset_values[date] = asset_value
+        external_flows[date] = flow_for_date
 
-    return pd.Series(result, name="Portföy")
+    value_series = pd.Series(asset_values, name="asset_value")
+    flow_series = pd.Series(external_flows, name="external_flow")
+    index_series = pd.Series(index=value_series.index, dtype=float, name="Portföy")
+
+    if len(value_series) == 0:
+        return index_series
+
+    index_series.iloc[0] = 100.0 if value_series.iloc[0] > 0 else float("nan")
+    for i in range(1, len(value_series)):
+        prev_value = value_series.iloc[i - 1]
+        curr_value = value_series.iloc[i]
+        flow = flow_series.iloc[i]
+        if prev_value <= 0 or pd.isna(index_series.iloc[i - 1]):
+            index_series.iloc[i] = 100.0 if curr_value > 0 else float("nan")
+            continue
+        daily_return = (curr_value - prev_value - flow) / prev_value
+        index_series.iloc[i] = index_series.iloc[i - 1] * (1 + daily_return)
+
+    return index_series
