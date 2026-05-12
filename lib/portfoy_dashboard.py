@@ -240,29 +240,32 @@ def create_portfolio_viewer(transactions, prices, wac_state, symbol_map, fx_usdt
 
 # ── 3-Column Transaction Form (v3) ────────────────────────────────────────────
 
-def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_callback=None):
+def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_callback=None,
+                               wac_state_getter=None, reset_callback=None):
     """
     3 sütunlu işlem giriş formu:
       Sol   — Sabit varlıklar (Altin, Gumus, DOLAR, EURO) fraksiyonel alım/satım
       Orta  — BIST hisseleri (serbest sembol) tam lot alım/satım + fiyat doğrulama
       Sağ   — Sermaye yönetimi (NAKIT_GIRIS / NAKIT_CIKIS)
+
+    wac_state_getter: () -> dict  pozisyon özeti için WAC getter
+    reset_callback:   () -> None  portföy sıfırlandıktan sonra çağrılır
     """
     _COL_W = "320px"
-    _COL_STYLE = (
-        "background:#1e1e2e;border:1px solid #313244;border-radius:8px;"
-        "padding:14px;margin:4px;min-width:300px;"
-    )
     _HDR = "color:#89b4fa;font-size:13px;font-weight:bold;margin-bottom:10px;border-bottom:1px solid #313244;padding-bottom:6px;"
     _LABEL_S = "color:#cdd6f4;font-size:13px;font-weight:bold;margin-bottom:8px;"
+    _BTN_ROW = widgets.Layout(gap="6px", justify_content="center", width="100%")
+    _DATE_FMT = "color:#6c7086;font-size:10px;margin-left:4px;"
     w_s = {"description_width": "110px"}
     w_l = widgets.Layout(width=_COL_W)
 
     # ── Shared state ──────────────────────────────────────────────────────────
 
-    known_assets = set(non_stock_assets) | {"BIST100"}  # SYMBOLS keys
+    known_assets = set(non_stock_assets) | {"BIST100"}
 
     balance_html = widgets.HTML(value="")
     history_output = widgets.Output()
+    positions_output = widgets.Output()
 
     def _load_tx():
         import os
@@ -300,6 +303,34 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
             except Exception:
                 print("Henüz işlem yok.")
 
+    def _refresh_positions():
+        positions_output.clear_output(wait=True)
+        with positions_output:
+            tx = _load_tx()
+            pos = compute_position(tx)
+            active = {a: u for a, u in pos.items() if u > 0}
+            if not active:
+                display(widgets.HTML(
+                    '<div style="color:#6c7086;font-size:12px;padding:6px 0;">Portföyde henüz varlık yok.</div>'
+                ))
+                return
+            ws = wac_state_getter() if wac_state_getter else {}
+            items_html = ""
+            for asset, units in active.items():
+                w = ws.get(asset, {}).get("wac", 0.0) if ws else 0.0
+                wac_str = (
+                    f' &nbsp;<span style="color:#a6adc8;">WAC ₺{w:,.2f}</span>'
+                    if w > 0 else ""
+                )
+                items_html += (
+                    f'<span style="background:#313244;border-radius:4px;padding:4px 10px;'
+                    f'margin:2px 4px 2px 0;display:inline-block;color:#cdd6f4;font-size:12px;">'
+                    f'<b>{asset}</b> &nbsp;{units:g}{wac_str}</span>'
+                )
+            display(widgets.HTML(
+                f'<div style="padding:4px 0;line-height:2.2;">{items_html}</div>'
+            ))
+
     def _save_row(asset, islem_type, tarih, fiyat, miktar, komisyon, status_w):
         import os
         new_row = pd.DataFrame([{
@@ -321,12 +352,23 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         _refresh_history()
         if on_save_callback:
             on_save_callback()
+        _refresh_positions()
 
     def _show_errors(errors, status_w):
         status_w.value = (
             '<div style="color:#f38ba8;font-size:12px;margin-top:6px;">'
             + "<br>".join(errors) + "</div>"
         )
+
+    def _date_fmt_widget(date_picker):
+        """DatePicker yanına GG/AA/YYYY etiket ekler."""
+        lbl = widgets.HTML(value="")
+        def _upd(change=None):
+            if date_picker.value:
+                lbl.value = f'<span style="{_DATE_FMT}">{date_picker.value.strftime("%d/%m/%Y")}</span>'
+        date_picker.observe(_upd, names="value")
+        _upd()
+        return lbl
 
     # ── Sol panel — sabit varlıklar ───────────────────────────────────────────
 
@@ -345,6 +387,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
+    v_date_lbl = _date_fmt_widget(v_date)
     v_price = widgets.FloatText(description="Fiyat (TL):", value=0.0, style=w_s, layout=w_l)
     v_qty = widgets.FloatText(description="Miktar:", value=1.0, style=w_s, layout=w_l)
     v_comm = widgets.FloatText(description="Komisyon (TL):", value=0.0, style=w_s, layout=w_l)
@@ -389,8 +432,10 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     left_panel = widgets.VBox([
         widgets.HTML(f'<div style="{_HDR}">📦 Varlık Alım / Satım</div>'),
-        v_asset_dd, v_islem_dd, v_date, v_price, v_qty, v_comm,
-        widgets.HBox([v_save, v_clear], layout=widgets.Layout(gap="6px")),
+        v_asset_dd, v_islem_dd,
+        widgets.VBox([v_date, v_date_lbl]),
+        v_price, v_qty, v_comm,
+        widgets.HBox([v_save, v_clear], layout=_BTN_ROW),
         v_status,
     ], layout=widgets.Layout(padding="0"))
 
@@ -411,6 +456,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
+    h_date_lbl = _date_fmt_widget(h_date)
     h_price = widgets.FloatText(description="Fiyat (TL):", value=0.0, style=w_s, layout=w_l)
     h_lot = widgets.IntText(description="Lot (adet):", value=1, style=w_s, layout=w_l)
     h_comm = widgets.FloatText(description="Komisyon (TL):", value=0.0, style=w_s, layout=w_l)
@@ -438,7 +484,6 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
             _show_errors(errs, h_status)
             return
 
-        # Sembol doğrulama (ALIŞ'ta)
         if h_islem_dd.value == "ALIŞ":
             h_status.value = (
                 '<div style="color:#cba6f7;font-size:12px;margin-top:6px;">⏳ Sembol doğrulanıyor...</div>'
@@ -473,8 +518,10 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     mid_panel = widgets.VBox([
         widgets.HTML(f'<div style="{_HDR}">📈 Hisse Alım / Satım</div>'),
-        h_ticker, h_islem_dd, h_date, h_price, h_lot, h_comm,
-        widgets.HBox([h_save, h_clear], layout=widgets.Layout(gap="6px")),
+        h_ticker, h_islem_dd,
+        widgets.VBox([h_date, h_date_lbl]),
+        h_price, h_lot, h_comm,
+        widgets.HBox([h_save, h_clear], layout=_BTN_ROW),
         h_status,
     ], layout=widgets.Layout(padding="0"))
 
@@ -490,6 +537,7 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         value=datetime.today().date(),
         style=w_s, layout=w_l,
     )
+    s_date_lbl = _date_fmt_widget(s_date)
     s_tutar = widgets.FloatText(description="Tutar (TL):", value=0.0, style=w_s, layout=w_l)
     s_status = widgets.HTML(value="")
     s_save = widgets.Button(description="Kaydet", button_style="success", icon="check",
@@ -514,7 +562,6 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
                 return
 
         try:
-            # Tutar = Fiyat * 1 lot, Komisyon=0
             _save_row("NAKIT", islem, s_date.value, s_tutar.value, 1.0, 0.0, s_status)
             s_status.value = (
                 '<div style="color:#a6e3a1;font-size:12px;margin-top:6px;">'
@@ -534,8 +581,10 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
 
     right_panel = widgets.VBox([
         widgets.HTML(f'<div style="{_HDR}">💰 Sermaye Yönetimi</div>'),
-        s_islem_dd, s_date, s_tutar,
-        widgets.HBox([s_save, s_clear], layout=widgets.Layout(gap="6px")),
+        s_islem_dd,
+        widgets.VBox([s_date, s_date_lbl]),
+        s_tutar,
+        widgets.HBox([s_save, s_clear], layout=_BTN_ROW),
         s_status,
     ], layout=widgets.Layout(padding="0"))
 
@@ -559,18 +608,90 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
         layout=widgets.Layout(gap="8px", flex_wrap="wrap"),
     )
 
+    # ── Portföy sıfırlama ─────────────────────────────────────────────────────
+
+    reset_status = widgets.HTML(value="")
+    reset_btn = widgets.Button(
+        description="Portföyü Sıfırla",
+        button_style="danger",
+        icon="trash",
+        layout=widgets.Layout(width="180px", height="34px"),
+    )
+    confirm_btn = widgets.Button(
+        description="Evet, Sil",
+        button_style="danger",
+        icon="warning",
+        layout=widgets.Layout(width="130px", height="34px", display="none"),
+    )
+    cancel_btn = widgets.Button(
+        description="İptal",
+        button_style="info",
+        icon="times",
+        layout=widgets.Layout(width="100px", height="34px", display="none"),
+    )
+
+    def _on_reset_click(_):
+        reset_status.value = (
+            '<div style="color:#f38ba8;font-size:12px;padding:4px 0;">'
+            "⚠️ Tüm işlemler kalıcı olarak silinecek. Emin misin?"
+            "</div>"
+        )
+        confirm_btn.layout.display = ""
+        cancel_btn.layout.display = ""
+        reset_btn.layout.display = "none"
+
+    def _on_confirm(_):
+        import os
+        if os.path.exists(transactions_path):
+            os.remove(transactions_path)
+        reset_status.value = (
+            '<div style="color:#a6e3a1;font-size:12px;padding:4px 0;">✓ Portföy sıfırlandı.</div>'
+        )
+        confirm_btn.layout.display = "none"
+        cancel_btn.layout.display = "none"
+        reset_btn.layout.display = ""
+        _refresh_balance()
+        _refresh_history()
+        _refresh_positions()
+        if reset_callback:
+            reset_callback()
+
+    def _on_cancel(_):
+        reset_status.value = ""
+        confirm_btn.layout.display = "none"
+        cancel_btn.layout.display = "none"
+        reset_btn.layout.display = ""
+
+    reset_btn.on_click(_on_reset_click)
+    confirm_btn.on_click(_on_confirm)
+    cancel_btn.on_click(_on_cancel)
+
+    reset_section = widgets.VBox([
+        widgets.HTML(
+            '<div style="border-top:1px solid #45475a;margin-top:10px;padding-top:8px;">'
+            '<span style="color:#f38ba8;font-size:11px;font-weight:bold;">⚠ TEHLİKELİ BÖLGE</span></div>'
+        ),
+        widgets.HBox(
+            [reset_btn, confirm_btn, cancel_btn],
+            layout=widgets.Layout(gap="6px", align_items="center"),
+        ),
+        reset_status,
+    ])
+
     # İlk render
     _refresh_balance()
     _refresh_history()
-
-    history_label = widgets.HTML(
-        f'<div style="{_LABEL_S}">Son İşlemler (en fazla 20)</div>'
-    )
+    _refresh_positions()
 
     return widgets.VBox([
+        widgets.HTML(
+            '<div style="color:#89dceb;font-size:13px;font-weight:bold;margin-bottom:6px;">📊 Mevcut Pozisyonlar</div>'
+        ),
+        positions_output,
         balance_html,
         three_cols,
-        history_label,
+        reset_section,
+        widgets.HTML(f'<div style="{_LABEL_S}">Son İşlemler (en fazla 20)</div>'),
         history_output,
     ])
 
