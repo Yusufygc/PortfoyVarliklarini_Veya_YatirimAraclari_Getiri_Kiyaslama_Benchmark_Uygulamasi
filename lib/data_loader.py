@@ -92,6 +92,9 @@ def load_transactions_csv(filepath: str) -> pd.DataFrame:
     missing = [c for c in REQUIRED_TRANSACTION_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"transactions.csv eksik sütunlar: {missing}. Beklenen: {REQUIRED_TRANSACTION_COLS}")
+    _LEGACY_RENAME = {"Altin": "Gram Altin", "Gumus": "Gram Gumus"}
+    df["Varlık Adı"] = df["Varlık Adı"].replace(_LEGACY_RENAME)
+
     invalid = set(df["İşlem Türü"].unique()) - VALID_ISLEM_TURLERI
     if invalid:
         raise ValueError(f"Geçersiz İşlem Türü değerleri: {invalid}. Geçerli: {VALID_ISLEM_TURLERI}")

@@ -299,8 +299,8 @@ def build_treemap(contributions: pd.DataFrame) -> go.Figure:
         texttemplate="<b>%{label}</b><br>%{customdata[1]:+.2f}%",
         hovertemplate=(
             "<b>%{label}</b><br>"
-            "P&L (TL): ₺%{customdata[0]:+,.0f}<br>"
-            "P&L (%): %{customdata[1]:+.2f}%<br>"
+            "Kar/Zarar (TL): ₺%{customdata[0]:+,.0f}<br>"
+            "Kar/Zarar (%): %{customdata[1]:+.2f}%<br>"
             "Ağırlık: %{customdata[2]:.2f}%<br>"
             "Katkı: %{customdata[3]:+.2f}%<extra></extra>"
         ),
@@ -313,12 +313,12 @@ def build_treemap(contributions: pd.DataFrame) -> go.Figure:
             ],
             cmid=0,
             showscale=True,
-            colorbar=dict(title="P&L %", tickfont=dict(color="#cdd6f4")),
+            colorbar=dict(title="K/Z %", tickfont=dict(color="#cdd6f4")),
         ),
     ))
 
     fig.update_layout(
-        title=dict(text="Varlık P&L Katkı Haritası", font=dict(size=16)),
+        title=dict(text="Varlık Kar/Zarar Katkı Haritası", font=dict(size=16)),
         template="plotly_dark",
         height=450,
     )

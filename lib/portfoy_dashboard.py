@@ -13,6 +13,7 @@ from IPython.display import display
 
 from data_loader import load_transactions_csv
 from portfolio_engine import _scalar, _nearest_price
+from benchmark_engine import TROY_OZ_TO_GRAM, GRAM_SYMBOLS
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,7 @@ def create_portfolio_viewer(transactions, prices, wac_state, symbol_map, fx_usdt
     refresh_callback: Yenile butonuna basıldığında çağrılır (load_all gibi).
     """
     USD_SYMBOLS = {"GC=F", "SI=F"}
+    GRAM_ASSET_SYMBOLS = GRAM_SYMBOLS
     output = widgets.Output()
 
     def _render():
@@ -160,6 +162,8 @@ def create_portfolio_viewer(transactions, prices, wac_state, symbol_map, fx_usdt
                             fx_date = _nearest_price(fx_usdtry, pd.Timestamp.today())
                             fx = _scalar(fx_usdtry.loc[fx_date]) if fx_date else 1.0
                             current_price_tl = p * fx
+                            if sym in GRAM_ASSET_SYMBOLS:
+                                current_price_tl /= TROY_OZ_TO_GRAM
                         else:
                             current_price_tl = p
 
@@ -171,18 +175,18 @@ def create_portfolio_viewer(transactions, prices, wac_state, symbol_map, fx_usdt
                 rows.append({
                     "Varlık": asset,
                     "Miktar": f"{units:g}",
-                    "WAC (TL)": f"₺{wac:,.2f}",
+                    "Ort. Maliyet (TL)": f"₺{wac:,.2f}",
                     "Güncel Fiyat": f"₺{current_price_tl:,.2f}" if current_price_tl else "—",
                     "Değer (TL)": f"₺{value_tl:,.0f}" if value_tl else "—",
-                    "K/Z (TL)": f"₺{pnl_tl:+,.0f}" if pnl_tl is not None else "—",
-                    "K/Z %": f"{pnl_pct:+.2f}%" if pnl_pct is not None else "—",
+                    "Kar/Zarar (TL)": f"₺{pnl_tl:+,.0f}" if pnl_tl is not None else "—",
+                    "Kar/Zarar %": f"{pnl_pct:+.2f}%" if pnl_pct is not None else "—",
                 })
 
             if not rows:
                 print("Henüz portföyde varlık yok.")
                 return
 
-            cols = ["Varlık", "Miktar", "WAC (TL)", "Güncel Fiyat", "Değer (TL)", "K/Z (TL)", "K/Z %"]
+            cols = ["Varlık", "Miktar", "Ort. Maliyet (TL)", "Güncel Fiyat", "Değer (TL)", "Kar/Zarar (TL)", "Kar/Zarar %"]
             col_values = [[r[c] for r in rows] for c in cols]
             n = len(rows)
             fill_colors = [["#1e1e2e" if i % 2 == 0 else "#181825" for i in range(n)] for _ in cols]
@@ -384,6 +388,19 @@ def create_transaction_form_v3(non_stock_assets, transactions_path, on_save_call
                             layout=widgets.Layout(width="130px", height="34px"))
     v_clear = widgets.Button(description="Temizle", button_style="warning", icon="times",
                              layout=widgets.Layout(width="130px", height="34px"))
+
+    _GRAM_ASSETS = {"Gram Altin", "Gram Gumus"}
+
+    def _v_update_labels(change=None):
+        if v_asset_dd.value in _GRAM_ASSETS:
+            v_price.description = "Fiyat (TL/gr):"
+            v_qty.description = "Miktar (gr):"
+        else:
+            v_price.description = "Fiyat (TL):"
+            v_qty.description = "Miktar:"
+
+    v_asset_dd.observe(_v_update_labels, names="value")
+    _v_update_labels()
 
     def _v_save(_):
         errs = []

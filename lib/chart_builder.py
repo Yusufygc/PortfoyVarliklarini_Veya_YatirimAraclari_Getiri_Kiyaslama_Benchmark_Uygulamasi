@@ -118,8 +118,8 @@ def build_kpi_cards(contributions: pd.DataFrame, n: int = 3):
         raise ImportError("ipywidgets kurulu değil: pip install ipywidgets")
 
     sorted_df = contributions.sort_values("pnl_pct", ascending=False)
-    gainers = sorted_df.head(n)
-    losers = sorted_df.tail(n).iloc[::-1]
+    gainers = sorted_df[sorted_df["pnl_pct"] >= 0].head(n)
+    losers = sorted_df[sorted_df["pnl_pct"] < 0].sort_values("pnl_pct").head(n)
 
     def make_card(row, color):
         return widgets.HTML(value=f"""
@@ -158,7 +158,7 @@ def build_summary_table(contributions: pd.DataFrame) -> go.Figure:
 
     fig = go.Figure(go.Table(
         header=dict(
-            values=["<b>Varlık</b>", "<b>P&L (TL)</b>", "<b>P&L %</b>", "<b>Ağırlık %</b>", "<b>Katkı %</b>"],
+            values=["<b>Varlık</b>", "<b>K/Z (TL)</b>", "<b>K/Z %</b>", "<b>Ağırlık %</b>", "<b>Katkı %</b>"],
             fill_color="#313244",
             font=dict(color="#cdd6f4", size=12),
             align="center",
@@ -181,7 +181,7 @@ def build_summary_table(contributions: pd.DataFrame) -> go.Figure:
         ),
     ))
     fig.update_layout(
-        title="Varlık Bazlı Performans",
+        title="Varlık Bazlı Kar/Zarar",
         template="plotly_dark",
         height=max(250, 40 * len(df) + 80),
         margin=dict(l=0, r=0, t=40, b=0),

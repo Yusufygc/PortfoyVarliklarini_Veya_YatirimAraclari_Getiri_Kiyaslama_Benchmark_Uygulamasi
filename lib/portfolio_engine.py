@@ -3,6 +3,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from benchmark_engine import TROY_OZ_TO_GRAM, GRAM_SYMBOLS
+
 
 def _scalar(val) -> float:
     """Extract scalar from a value that may be a pandas Series (duplicate index)."""
@@ -118,7 +120,10 @@ def compute_portfolio_value_series(
             if sym in usd_symbols:
                 fx_date = _nearest_price(fx_usdtry, date)
                 fx = _scalar(fx_usdtry.loc[fx_date]) if fx_date else 1.0
-                value_tl = price * fx * units
+                price_tl = price * fx
+                if sym in GRAM_SYMBOLS:
+                    price_tl /= TROY_OZ_TO_GRAM
+                value_tl = price_tl * units
             else:
                 value_tl = price * units
 
@@ -251,7 +256,9 @@ def compute_asset_contributions(
             fx_date = _nearest_price(fx_usdtry, end_dt)
             fx = _scalar(fx_usdtry.loc[fx_date]) if fx_date else 1.0
             current_price_tl = current_price * fx
-            wac_tl = wac  # WAC zaten TL cinsinden saklanır (alış anında çevrilmiş)
+            if sym in GRAM_SYMBOLS:
+                current_price_tl /= TROY_OZ_TO_GRAM
+            wac_tl = wac  # WAC zaten TL/gram cinsinden saklanır (alış anında kullanıcı gram fiyatı girer)
         else:
             current_price_tl = current_price
             wac_tl = wac
