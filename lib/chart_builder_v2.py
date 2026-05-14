@@ -333,6 +333,12 @@ def build_period_bar_chart(
     return fig
 
 
+def format_turkish_lira(value, decimals: int = 1) -> str:
+    sign = "+" if value >= 0 else "-"
+    formatted = f"{abs(float(value)):,.{decimals}f}"
+    return sign + formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
 def build_treemap(contributions: pd.DataFrame) -> go.Figure:
     """
     Varlık P&L katkı haritası.
@@ -342,17 +348,18 @@ def build_treemap(contributions: pd.DataFrame) -> go.Figure:
     df["pnl_pct"]         = df["pnl_pct"].round(2)
     df["weight_pct"]      = df["weight_pct"].round(2)
     df["contribution_pct"] = df["contribution_pct"].round(2)
+    df["pnl_tl_display"] = df["pnl_tl"].apply(format_turkish_lira)
     abs_values = df["pnl_tl"].abs().tolist()
 
     fig = go.Figure(go.Treemap(
         labels=df["Varlık Adı"].tolist(),
         parents=[""] * len(df),
         values=abs_values,
-        customdata=df[["pnl_tl", "pnl_pct", "weight_pct", "contribution_pct"]].values,
+        customdata=df[["pnl_tl_display", "pnl_pct", "weight_pct", "contribution_pct"]].values,
         texttemplate="<b>%{label}</b><br>%{customdata[1]:+.2f}%",
         hovertemplate=(
             "<b>%{label}</b><br>"
-            "Kar/Zarar (TL): ₺%{customdata[0]:+,.0f}<br>"
+            "Kar/Zarar (TL): \u20ba%{customdata[0]}<br>"
             "Kar/Zarar (%): %{customdata[1]:+.2f}%<br>"
             "Ağırlık: %{customdata[2]:.2f}%<br>"
             "Katkı: %{customdata[3]:+.2f}%<extra></extra>"

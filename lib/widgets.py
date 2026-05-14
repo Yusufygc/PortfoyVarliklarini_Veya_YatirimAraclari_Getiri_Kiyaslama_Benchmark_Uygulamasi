@@ -85,12 +85,84 @@ def create_currency_toggle() -> widgets.ToggleButtons:
     )
 
 
+class AssetCheckboxSelector(widgets.HBox):
+    def __init__(self, asset_names: list):
+        self._asset_checkboxes = [
+            widgets.Checkbox(
+                value=True,
+                description=name,
+                indent=False,
+                layout=widgets.Layout(width="150px", margin="0"),
+            )
+            for name in asset_names
+        ]
+        label = widgets.HTML(
+            value="<b>Varliklar:</b>",
+            layout=widgets.Layout(width="72px", margin="2px 0 0 0"),
+        )
+        grid = widgets.GridBox(
+            children=self._asset_checkboxes,
+            layout=widgets.Layout(
+                grid_template_columns="repeat(2, 150px)",
+                grid_gap="2px 8px",
+                align_items="center",
+            ),
+        )
+        super().__init__(
+            [label, grid],
+            layout=widgets.Layout(
+                align_items="flex-start",
+                gap="6px",
+                padding="8px 0",
+                width="390px",
+            ),
+        )
+
+    @property
+    def value(self) -> tuple:
+        return tuple(cb.description for cb in self._asset_checkboxes if cb.value)
+
+    @value.setter
+    def value(self, selected_assets) -> None:
+        selected = set(selected_assets or [])
+        for cb in self._asset_checkboxes:
+            cb.value = cb.description in selected
+
+
+def create_asset_selector(asset_names: list) -> AssetCheckboxSelector:
+    return AssetCheckboxSelector(asset_names)
+
+
+def _get_selected_assets(asset_selector) -> list:
+    if asset_selector is None:
+        return None
+    return list(asset_selector.value)
+
+
+def _observe_asset_selector(asset_selector, handler) -> None:
+    if asset_selector is None:
+        return
+    checkboxes = getattr(asset_selector, "_asset_checkboxes", None)
+    if checkboxes is not None:
+        for checkbox in checkboxes:
+            checkbox.observe(handler, names="value")
+        return
+    asset_selector.observe(handler, names="value")
+
+
+def _asset_selector_widget(asset_selector):
+    if asset_selector is None:
+        return None
+    return asset_selector
+
+
 def wire_dashboard(
     render_fn,
     output_widget: widgets.Output,
     start_picker: widgets.DatePicker,
     end_picker: widgets.DatePicker,
     currency_toggle: widgets.ToggleButtons,
+    asset_selector: widgets.Widget = None,
 ) -> widgets.VBox:
     """
     Tüm kontrollere .observe() bağlar.
@@ -114,23 +186,49 @@ def wire_dashboard(
                 f"{exc}</div>"
             )
             return
+        selected_assets = None
+        if asset_selector is not None:
+            selected_assets = _get_selected_assets(asset_selector)
+            if not selected_assets:
+                status_html.value = (
+                    '<div style="color:#f38ba8;font-size:12px;padding:2px 0;">'
+                    "En az bir varlik secilmeli.</div>"
+                )
+                return
         status_html.value = ""
         currency = currency_toggle.value
         with output_widget:
             output_widget.clear_output(wait=True)
-            render_fn(
-                start_date=start.strftime("%Y-%m-%d"),
-                end_date=end.strftime("%Y-%m-%d"),
-                currency=currency,
-            )
+            kwargs = {
+                "start_date": start.strftime("%Y-%m-%d"),
+                "end_date": end.strftime("%Y-%m-%d"),
+                "currency": currency,
+            }
+            if asset_selector is not None:
+                kwargs["selected_assets"] = selected_assets
+            render_fn(**kwargs)
 
     start_picker.observe(_on_change, names="value")
     end_picker.observe(_on_change, names="value")
     currency_toggle.observe(_on_change, names="value")
+    _observe_asset_selector(asset_selector, _on_change)
 
+    date_controls = widgets.HBox(
+        [start_picker, end_picker],
+        layout=widgets.Layout(align_items="center", gap="16px"),
+    )
+    controls_children = [date_controls, currency_toggle]
+    selector_widget = _asset_selector_widget(asset_selector)
+    if selector_widget is not None:
+        controls_children.append(selector_widget)
     controls = widgets.HBox(
-        [start_picker, end_picker, currency_toggle],
-        layout=widgets.Layout(align_items="center", gap="16px", padding="8px 0"),
+        controls_children,
+        layout=widgets.Layout(
+            align_items="flex-start",
+            gap="18px",
+            padding="8px 0",
+            flex_flow="row wrap",
+        ),
     )
     status_html = widgets.HTML(value="")
     return widgets.VBox([controls, status_html, output_widget])
