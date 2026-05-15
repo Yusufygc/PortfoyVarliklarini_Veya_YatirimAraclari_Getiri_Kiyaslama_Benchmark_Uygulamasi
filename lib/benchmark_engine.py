@@ -33,7 +33,7 @@ def normalize_to_100(price_series: pd.Series, start_date: str) -> pd.Series:
 def _convert_to_tl(series: pd.Series, symbol: str, fx_usdtry: pd.Series) -> pd.Series:
     """USD bazlı sembolü TL'ye çevirir. GC=F ve SI=F için gram bazına da çevirir."""
     if symbol in USD_NATIVE_SYMBOLS:
-        fx_aligned = fx_usdtry.reindex(series.index).ffill().bfill()
+        fx_aligned = fx_usdtry.reindex(series.index).ffill()
         tl = series * fx_aligned
         if symbol in GRAM_SYMBOLS:
             tl = tl / TROY_OZ_TO_GRAM  # USD/troy oz × TL/USD → TL/troy oz → TL/gram
@@ -44,7 +44,7 @@ def _convert_to_tl(series: pd.Series, symbol: str, fx_usdtry: pd.Series) -> pd.S
 def _convert_to_usd(series: pd.Series, symbol: str, fx_usdtry: pd.Series) -> pd.Series:
     """TL bazlı sembolü USD'ye çevirir. GC=F ve SI=F için USD/gram'a çevirir."""
     if symbol in TL_NATIVE_SYMBOLS:
-        fx_aligned = fx_usdtry.reindex(series.index).ffill().bfill()
+        fx_aligned = fx_usdtry.reindex(series.index).ffill()
         return series / fx_aligned
     if symbol in GRAM_SYMBOLS:
         return series / TROY_OZ_TO_GRAM  # USD/troy oz → USD/gram
@@ -85,7 +85,7 @@ def build_benchmark_series(
         if sym not in prices.columns:
             continue
 
-        raw = prices[sym].reindex(date_range).ffill().bfill().dropna()
+        raw = prices[sym].reindex(date_range).ffill().dropna()
 
         if currency == "TL":
             converted = _convert_to_tl(raw, sym, fx_usdtry)
@@ -95,12 +95,13 @@ def build_benchmark_series(
             if cpi_series is None:
                 raise ValueError("REAL mod için cpi_series gerekli.")
             tl_series = _convert_to_tl(raw, sym, fx_usdtry)
-            cpi_aligned = cpi_series.reindex(tl_series.index).ffill().bfill()
+            cpi_aligned = cpi_series.reindex(tl_series.index).ffill()
             cpi_base = cpi_aligned.iloc[0]
             converted = tl_series / (cpi_aligned / cpi_base)
         else:
             raise ValueError(f"Geçersiz currency: {currency}. 'TL', 'USD' veya 'REAL' olmalı.")
 
+        converted = converted.dropna()
         try:
             normalized = normalize_to_100(converted, start_date)
             result[sym] = normalized

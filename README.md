@@ -1,216 +1,184 @@
 # BenchmarkTakip
 
-Kişisel yatırım portföyünü finansal benchmark'larla karşılaştıran interaktif Jupyter dashboard'u.
-Google Colab ve yerel Jupyter ortamlarında çalışır.
+Kişisel yatırım portföyünü ve seçili benchmark varlıklarını TL, dolar ve enflasyon sonrası reel bazda karşılaştıran interaktif Jupyter dashboard'u.
 
----
+## Kısa yorum
 
-## Özellikler
+- TL modunda: "Param TL olarak kaç kat arttı?"
+- USD modunda: "Param dolar bazında kaç kat arttı?"
+- Reel/TÜFE modunda: "Param enflasyonu yendikten sonra kaç kat arttı?"
 
-### Benchmark Karşılaştırması
+Bu yüzden grafiklerdeki 100 başlangıç noktası, seçilen tarihteki referanstır. Değer 180 ise seçili bazda 1,8 kat; 75 ise seçili bazda başlangıca göre %25 kayıp anlamına gelir.
 
-| Varlık | Kaynak | Birim |
-|--------|--------|-------|
-| Gram Altın | yfinance `GC=F` | USD/troy oz → TL/gram |
-| Gram Gümüş | yfinance `SI=F` | USD/troy oz → TL/gram |
-| Dolar/TL | yfinance `USDTRY=X` | TL |
-| Euro/TL | yfinance `EURTRY=X` | TL |
-| BIST100 | yfinance `XU100.IS` | TL (puan) |
-| Mevduat | TCMB politika faizi | Bileşik faiz eğrisi |
+## Ana kullanım
 
-### Ana Dashboard (`BenchmarkKarsilastirma.ipynb`)
+`BenchmarkKarsilastirma.ipynb` ana karşılaştırma ekranıdır. Dashboard'da:
 
-**İnteraktif kontroller:**
-- Tarih aralığı seçici (başlangıç / bitiş DatePicker)
-- Para birimi toggle: **TL** (nominal) · **USD** · **Reel** (TÜFE deflate)
+- Başlangıç ve bitiş tarihi seçilir.
+- TL, USD veya Reel/TÜFE modu seçilir.
+- Varlıklar checkbox listesinden tek tek açılıp kapatılır.
+- Tek varlık seçilirse tek çizgi, birden fazla varlık seçilirse özel karşılaştırma grafiği üretilir.
+- Veri seçilen aralığı kapsamıyorsa grafik çizmek yerine açık hata mesajı gösterilir.
 
-**Grafikler ve Analiz Hücreleri:**
+Karşılaştırılabilen varlıklar:
 
-| Hücre | İçerik |
-|-------|--------|
-| 1-7 | Kurulum, veri yükleme, ana dashboard (orijinal) |
-| 8 | Analiz bölümü başlığı |
-| 9 | `analysis_df` — paylaşılan analiz veri seti |
-| 10-11 | Performans line chart v2 — solid çizgi, range selector, combobox varlık filtresi |
-| 12-13 | Drawdown grafiği — tepe'den düşüş % |
-| 14-15 | Korelasyon ısı haritası — günlük getiri Pearson matrisi |
-| 16-17 | Dönemsel bar chart — aylık + çeyreklik getiri |
-| 18-19 | Treemap + Risk-Getiri scatter |
+| Varlık | Kaynak | Temel veri |
+|---|---|---|
+| Gram Altın | yfinance `GC=F` + `USDTRY=X` | USD/troy ons, TL/gram veya USD/gram |
+| Gram Gümüş | yfinance `SI=F` + `USDTRY=X` | USD/troy ons, TL/gram veya USD/gram |
+| DOLAR | yfinance `USDTRY=X` | TL/USD kuru |
+| EURO | yfinance `EURTRY=X` | TL/EUR kuru |
+| BIST100 | yfinance `XU100.IS` | TL bazlı endeks puanı |
+| Mevduat | `tcmb_rates.csv` veya sabit politika faizi | Bileşik TL mevduat endeksi |
 
-### Analiz Grafikleri (`chart_builder_v2.py`)
+## Modlar neyi kıyaslıyor?
 
-| Fonksiyon | Açıklama |
-|-----------|----------|
-| `build_performance_line_chart_v2` | Solid çizgi, 1A/3A/6A/YBB/1Y/Tümü butonları, range slider, başlangıç=100 referans |
-| `build_asset_filter_widget` | Dropdown combobox — seçilen varlık için grafik anlık yenilenir |
-| `build_rolling_returns_chart` | 30g ve 90g yuvarlanan kümülatif getiri |
-| `build_drawdown_chart` | Tepe'den düşüş; portföy varsa kırmızı dolgulu alan |
-| `build_correlation_heatmap` | Pearson korelasyon matrisi; kırmızı(−1) → nötr(0) → yeşil(+1) |
-| `build_period_bar_chart` | Aylık (`ME`) veya çeyreklik (`QE`) gruplanmış çubuk |
-| `build_treemap` | P&L büyüklük haritası; renk = yüzde getiri |
-| `build_risk_return_scatter` | x=yıllık volatilite, y=toplam getiri; portföy ★ sembolü |
+| Mod | Cevapladığı soru | Hesap mantığı |
+|---|---|---|
+| TL (Nominal) | TL olarak ne kadar büyüdü? | Her varlık nominal TL değerine çevrilir ve başlangıç 100 yapılır. |
+| USD | Dolar bazında ne kadar büyüdü? | TL bazlı varlıklar USDTRY'ye bölünür; altın/gümüş USD/gram olarak kullanılır. |
+| Reel (TÜFE) | Enflasyonu yendikten sonra ne kaldı? | Tüm varlıklar önce nominal TL bazına alınır, sonra TÜFE endeksiyle deflate edilir. |
 
----
+Altın ve gümüş için yfinance verisi troy ons cinsinden gelir:
 
-## Proje Yapısı
-
-```
-BenchmarkTakip/
-├── BenchmarkKarsilastirma.ipynb   # Ana dashboard (19 hücre)
-├── BenchmarkVeriTest.ipynb        # Veri doğrulama testleri
-├── PortfolyoBenchmark.ipynb       # Portföy vs benchmark (geliştirme aşamasında)
-│
-├── lib/
-│   ├── data_loader.py             # yfinance fetch, 12s cache, CSV yükleyiciler
-│   ├── benchmark_engine.py        # Normalizasyon, TL/USD/REAL dönüşüm, mevduat serisi
-│   ├── chart_builder.py           # Orijinal Plotly grafik fonksiyonları
-│   ├── chart_builder_v2.py        # Gelişmiş analiz grafikleri (8 fonksiyon)
-│   ├── portfolio_engine.py        # TWRR, WAC maliyet hesabı
-│   └── widgets.py                 # ipywidgets kontrolleri ve dashboard wiring
-│
-├── data/
-│   ├── portfolio.csv              # Portföy pozisyonları (Varlık Adı, Alış Tarihi, Fiyat, Miktar, Komisyon)
-│   ├── transactions.csv           # İşlem geçmişi (ALIŞ, SATIŞ, NAKİT_GİRİŞ, NAKİT_ÇIKIŞ)
-│   ├── cpi_turkey.csv             # TÜİK CPI endeksi (aylık, Tarih + CPI_Endeks)
-│   └── tcmb_rates.csv             # TCMB politika faizi (opsiyonel; yoksa sabit oran kullanılır)
-│
-├── docs/wiki/                     # Mimari kararlar, hesaplama yöntemleri, değişiklik logu
-└── requirements.txt
+```text
+TL/gram  = USD/troy_oz * USDTRY / 31.1035
+USD/gram = USD/troy_oz / 31.1035
 ```
 
----
+Reel/TÜFE modunda kullanılan temel formül:
+
+```text
+CPI_orani_t = CPI_t / CPI_baslangic
+Reel_deger_t = Nominal_TL_deger_t / CPI_orani_t
+Reel_endeks_t = Reel_deger_t / Reel_deger_baslangic * 100
+```
+
+Örnek: Bir varlık TL olarak 3 kat artarken TÜFE 1,5 kat arttıysa reel artış `3 / 1,5 = 2` kattır. Grafikte bu yaklaşık 200 görünür.
+
+## TÜFE/CPI verisi
+
+Reel mod için `data/cpi_turkey.csv` kullanılır. Bu dosyadaki değer aylık enflasyon yüzdesi değil, endeks seviyesidir.
+
+```csv
+Tarih,CPI_Endeks
+2020-01-01,446.45
+2020-02-01,448.02
+```
+
+Manuel veri oluşturacaksanız:
+
+- `Tarih` ayın ilk günü olmalı.
+- `CPI_Endeks` pozitif ve endeks seviyesi olmalı.
+- Aylık enflasyon yüzdesini doğrudan yazmayın.
+- Elinizde aylık enflasyon varsa endeksi şu şekilde ilerletin:
+
+```text
+Yeni_CPI_Endeks = Onceki_CPI_Endeks * (1 + Aylik_Enflasyon_Yuzde / 100)
+```
+
+Notebook çalışırken `ensure_cpi_coverage()` seçilen tarih aralığı için CPI kapsamını tamamlamaya çalışır. Öncelik sırası:
+
+1. Mevcut `data/cpi_turkey.csv`
+2. TCMB EVDS API, `EVDS_API_KEY` veya `TCMB_EVDS_API_KEY` tanımlıysa
+3. DBnomics TCMB/CPI kaynağı
+
+Veri tamamlanamazsa Reel/TÜFE grafiği boş veya yanıltıcı çizilmez; kullanıcıya kapsam hatası gösterilir.
+
+İçinde bulunulan ayın TÜFE verisi henüz yayımlanmamışsa sistem son yayımlanan resmi ayı günlük olarak ileri taşır. Örneğin `2026-05-14` için `2026-04-01` endeksi varsa Reel/TÜFE grafiği çizilir; Mayıs ayına tahmini endeks yazılmaz.
 
 ## Kurulum
 
-### Google Colab
-
-GitHub notebook preview dosyayı çalıştırmaz; `ipywidgets` ve interaktif Plotly grafikleri GitHub'da metin temsili olarak görünebilir. Grafikleri görmek için notebook'u Colab'da çalıştırın.
-
-Önerilen akış:
-
-```python
-!git clone https://github.com/KULLANICI_ADINIZ/BenchmarkTakip.git
-%cd BenchmarkTakip
-```
-
-Sonra `BenchmarkKarsilastirma.ipynb` veya `PortfolyoBenchmark.ipynb` dosyasını Colab'da açıp hücreleri sırayla çalıştırın. Notebook'lar repo kökündeki `lib/` klasörünü otomatik bulur. Veri klasörü için öncelik:
-
-1. `PORTFOLIO_DATA_DIR` ortam değişkeni
-2. Colab'da varsa `/content/drive/MyDrive/PortfolioProject/`
-3. Repo içindeki `data/`
-
-Notebook'ların ilk hücresi bağımlılıkları otomatik kurar:
-
-```python
-import subprocess, sys
-REQUIRED = ["yfinance", "plotly", "ipywidgets"]
-for pkg in REQUIRED:
-    try:
-        __import__(pkg)
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
-```
-
-Google Drive bağlama (Colab'da otomatik):
-
-```python
-from google.colab import drive
-drive.mount("/content/drive")
-```
-
-Kalıcı portföy verisi istiyorsanız `transactions.csv`, `cpi_turkey.csv` ve `tcmb_rates.csv` dosyalarını `/content/drive/MyDrive/PortfolioProject/` altında tutun ya da `PORTFOLIO_DATA_DIR` ile farklı bir klasör seçin.
-
-### Yerel Jupyter
+Yerel Jupyter:
 
 ```bash
 pip install -r requirements.txt
 jupyter notebook BenchmarkKarsilastirma.ipynb
 ```
 
----
+Kullanılan conda ortamında çalıştırmak için örnek:
 
-## Teknik Notlar
-
-### Normalizasyon
-
-Tüm varlıklar `başlangıç = 100` bazına normalize edilir:
-
-```
-normalize(fiyat, t0) = fiyat_t / fiyat_t0 × 100
+```powershell
+C:\Users\ysfygc\anaconda3\envs\BencmarkTakip\python.exe -m jupyter notebook BenchmarkKarsilastirma.ipynb
 ```
 
-Farklı birimler (TL/gram, dolar, BIST puanı) doğrudan karşılaştırılabilir hale gelir.
-
-### Gram Dönüşümü
-
-`GC=F` ve `SI=F` troy ons fiyatı verir:
-
-```
-TL/gram = USD/troy_oz × USDTRY ÷ 31.1035
-```
-
-### Para Birimi Modları
-
-| Mod | Açıklama |
-|-----|----------|
-| **TL** | Nominal TL değeri |
-| **USD** | TL bazlı seriler ÷ USDTRY; USD bazlı seriler ÷ 31.1035 |
-| **REAL** | TL nominal → TÜFE CPI ile deflate (satın alma gücü) |
-
-### Mevduat Serisi
+Google Colab için önerilen akış:
 
 ```python
-günlük_oran = (1 + yıllık_faiz / 100) ** (1/365) - 1
-kümülatif   = (1 + günlük_oran).cumprod() × 100
+!git clone https://github.com/KULLANICI_ADINIZ/BenchmarkTakip.git
+%cd BenchmarkTakip
 ```
 
-Gerçek zamanlı API yok. Öncelik sırası: `tcmb_rates.csv` → sabit `TCMB_POLICY_RATE_PCT` (varsayılan: %37).
+Notebook'lar repo kökündeki `lib/` klasörünü otomatik bulur. Veri klasörü önceliği:
 
-### Cache
+1. `PORTFOLIO_DATA_DIR`
+2. Colab'da varsa `/content/drive/MyDrive/PortfolioProject/`
+3. Repo içindeki `data/`
 
-yfinance verisi `data/prices_cache.pkl` içinde saklanır. Maksimum yaş: 12 saat.
-Süre dolduğunda veya yeni semboller talep edildiğinde otomatik yenilenir.
+## Proje yapısı
 
-### Maliyet Hesabı
-
-Ağırlıklı Ortalama Maliyet (WAC) yöntemi kullanılır — FIFO/LIFO değil.
-Kısmi satışta WAC değişmez; yalnızca birim sayısı azalır.
-
-### Yüzde Değeri Gösterimi
-
-Plotly hovertemplate format specifier'ları unified hover modunda güvenilmez olduğundan
-yüzde değerleri Plotly'e verilmeden Python'da `.round(2)` ile yuvarlanır.
-
----
-
-## Veri Şemaları
-
-### `portfolio.csv`
-
-```
-Varlık Adı | Alış Tarihi | Alış Fiyatı | Miktar | Komisyon
-Altin      | 01.01.2023  | 1823.50     | 0.5    | 0
-```
-
-### `transactions.csv`
-
-```
-Tarih      | Varlık Adı | İşlem Türü   | Fiyat  | Miktar | Komisyon
-01.01.2023 | Altin      | ALIŞ         | 1823.5 | 0.5    | 0
+```text
+BenchmarkTakip/
+├── BenchmarkKarsilastirma.ipynb
+├── PortfolyoBenchmark.ipynb
+├── lib/
+│   ├── data_loader.py
+│   ├── benchmark_engine.py
+│   ├── chart_builder.py
+│   ├── chart_builder_v2.py
+│   ├── portfolio_engine.py
+│   └── widgets.py
+├── data/
+│   ├── cpi_turkey.csv
+│   ├── tcmb_rates.csv
+│   ├── portfolio.csv
+│   └── transactions.csv
+├── docs/wiki/
+└── requirements.txt
 ```
 
-Geçerli `İşlem Türü` değerleri: `ALIŞ` · `SATIŞ` · `NAKIT_GIRIS` · `NAKIT_CIKIS`
+## Veri dosyaları
 
-### `cpi_turkey.csv`
+### `data/cpi_turkey.csv`
 
-```
-Tarih      | CPI_Endeks
-01.01.2023 | 1285.43
+```csv
+Tarih,CPI_Endeks
+2023-01-01,1203.48
 ```
 
-### `tcmb_rates.csv` (opsiyonel)
+Reel/TÜFE modu için zorunludur.
 
+### `data/tcmb_rates.csv`
+
+```csv
+Tarih,Faiz_Orani_Yillik_Pct
+2023-01-01,42.5
 ```
-Tarih      | Faiz_Orani_Yillik_Pct
-01.01.2023 | 42.5
+
+Mevduat serisi için kullanılır. Dosya yoksa sistem varsayılan sabit faiz oranıyla mevduat endeksi üretir.
+
+### `data/portfolio.csv`
+
+```csv
+Varlık Adı,Alış Tarihi,Alış Fiyatı,Miktar,Komisyon
+Gram Altin,01.01.2023,1823.50,0.5,0
 ```
+
+### `data/transactions.csv`
+
+```csv
+Tarih,Varlık Adı,İşlem Türü,Fiyat,Miktar,Komisyon
+01.01.2023,Gram Altin,ALIŞ,1823.5,0.5,0
+```
+
+Geçerli işlem türleri: `ALIŞ`, `SATIŞ`, `NAKIT_GIRIS`, `NAKIT_CIKIS`.
+
+## Teknik notlar
+
+- Tüm benchmark serileri seçilen başlangıç tarihinde `100` olacak şekilde normalize edilir.
+- Fiyat serilerinde başlangıç öncesi eksik veriler geriye doldurulmaz; veri yoksa sahte 100 serisi üretilmez.
+- yfinance fiyat cache'i `data/prices_cache.pkl` içinde tutulur.
+- yfinance zaman dilimi cache'i proje içindeki yazılabilir cache dizinine alınır.
+- Treemap hover'ında TL tutarlar Türkçe okunabilir biçimde gösterilir: `₺+764.911,1`.
+
+Detaylı hesaplama notları için `docs/wiki/` klasöründeki wiki dosyalarına bakın.
