@@ -3,6 +3,7 @@ docs/
 CLAUDE.md
 RULES.md
 Plans.md
+.claude/
 
 # --- Veri ve cache (kisisel, buyuk dosyalar) ---
 data/cache/
