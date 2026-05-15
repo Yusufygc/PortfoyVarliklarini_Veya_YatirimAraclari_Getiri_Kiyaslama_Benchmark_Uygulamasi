@@ -11,6 +11,9 @@ REQUIRED_TRANSACTION_COLS = ["Tarih", "Varlık Adı", "İşlem Türü", "Fiyat",
 VALID_ISLEM_TURLERI = {"ALIŞ", "SATIŞ", "NAKIT_GIRIS", "NAKIT_CIKIS"}
 MAX_FORWARD_FILL_DAYS = 5
 
+MACRO_TTL_DAYS = 7
+MACRO_CACHE_FILE = "macro_cache.pkl"
+
 
 def fetch_prices(
     symbols: list,
@@ -34,10 +37,14 @@ def fetch_prices(
                         return sliced
             except Exception as exc:
                 warnings.warn(
-                    f"Fiyat cache okunamadı, yfinance yeniden denenecek: {exc}",
+                    f"Fiyat cache okunamadı, bozuk dosya silinecek: {exc}",
                     UserWarning,
                     stacklevel=2,
                 )
+                try:
+                    os.remove(cache_file)
+                except OSError:
+                    pass
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -54,6 +61,25 @@ def fetch_prices(
         df.columns = symbols
 
     df = df.sort_index()
+
+    # Per-symbol retry: multi-symbol download bazı sembollerde tüm NaN dönerse tek tek dene
+    for sym in symbols:
+        if sym not in df.columns or df[sym].dropna().empty:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    retry = yf.download(sym, start=start, end=end, auto_adjust=True, progress=False)
+                if not retry.empty:
+                    close = retry["Close"] if "Close" in retry.columns else retry
+                    if isinstance(close, pd.DataFrame):
+                        close = close.iloc[:, 0]
+                    df[sym] = close
+            except Exception as exc:
+                warnings.warn(
+                    f"yfinance tek-sembol retry başarısız ({sym}): {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     # Forward-fill with gap warning
     gap_mask = df.isna().sum(axis=1) > 0
@@ -75,10 +101,14 @@ def fetch_prices(
             df_filled = pd.concat([existing, df_filled]).groupby(level=0).last()
         except Exception as exc:
             warnings.warn(
-                f"Mevcut fiyat cache birleştirilemedi, yeni cache yazılacak: {exc}",
+                f"Mevcut fiyat cache birleştirilemedi, bozuk dosya silinip yeniden yazılacak: {exc}",
                 UserWarning,
                 stacklevel=2,
             )
+            try:
+                os.remove(cache_file)
+            except OSError:
+                pass
 
     with open(cache_file, "wb") as f:
         pickle.dump(df_filled, f)
@@ -119,7 +149,77 @@ def load_transactions_csv(filepath: str) -> pd.DataFrame:
     return df.sort_values("Tarih").reset_index(drop=True)
 
 
-def load_cpi_series(filepath: str) -> pd.Series:
+def _macro_stale(cache_path: str, key: str) -> bool:
+    cache_file = os.path.join(cache_path, MACRO_CACHE_FILE)
+    if not os.path.exists(cache_file):
+        return True
+    try:
+        with open(cache_file, "rb") as f:
+            cache = pickle.load(f)
+    except Exception:
+        return True
+    entry = cache.get(key)
+    if not entry:
+        return True
+    updated_at = entry.get("updated_at")
+    if not updated_at:
+        return True
+    return (datetime.now() - updated_at).days >= MACRO_TTL_DAYS
+
+
+def _update_macro_cache(cache_path: str, key: str, df: pd.DataFrame, source: str) -> None:
+    os.makedirs(cache_path, exist_ok=True)
+    cache_file = os.path.join(cache_path, MACRO_CACHE_FILE)
+    cache = {}
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "rb") as f:
+                cache = pickle.load(f)
+        except Exception:
+            cache = {}
+    cache[key] = {"df": df.copy(), "source": source, "updated_at": datetime.now()}
+    with open(cache_file, "wb") as f:
+        pickle.dump(cache, f)
+
+
+def _upsert_csv(filepath: str, new_df: pd.DataFrame, key: str = "Tarih") -> None:
+    """Mevcut CSV ile yeni df'yi birleştir, key sütunundaki duplicate'lerde son kayıt kazanır.
+    Dosyaya dayfirst (GG.AA.YYYY) formatında yazar."""
+    if os.path.exists(filepath):
+        try:
+            existing = pd.read_csv(filepath)
+            existing[key] = pd.to_datetime(existing[key], dayfirst=True, errors="coerce")
+        except Exception:
+            existing = pd.DataFrame(columns=new_df.columns)
+    else:
+        existing = pd.DataFrame(columns=new_df.columns)
+
+    new_df = new_df.copy()
+    new_df[key] = pd.to_datetime(new_df[key], errors="coerce")
+
+    merged = pd.concat([existing, new_df], ignore_index=True)
+    merged = merged.dropna(subset=[key])
+    merged = merged.drop_duplicates(subset=[key], keep="last").sort_values(key).reset_index(drop=True)
+    merged[key] = merged[key].dt.strftime("%d.%m.%Y")
+
+    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+    merged.to_csv(filepath, index=False)
+
+
+def load_cpi_series(filepath: str, cache_path: str = "data", auto_refresh: bool = True) -> pd.Series:
+    if auto_refresh and _macro_stale(cache_path, "cpi"):
+        try:
+            from lib import macro_scraper
+            df, src = macro_scraper.fetch_cpi_with_fallback(baseline_csv_path=filepath)
+            _upsert_csv(filepath, df, key="Tarih")
+            _update_macro_cache(cache_path, "cpi", df, src)
+        except Exception as exc:
+            warnings.warn(
+                f"CPI scrape başarısız, mevcut CSV kullanılıyor: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
+
     df = pd.read_csv(filepath)
     if "Tarih" not in df.columns or "CPI_Endeks" not in df.columns:
         raise ValueError("cpi_turkey.csv 'Tarih' ve 'CPI_Endeks' sütunları içermeli.")
@@ -134,10 +234,30 @@ def load_fx_series(pair: str, start: str, end: str, cache_path: str) -> pd.Serie
     return df[pair].dropna()
 
 
-def load_tcmb_rates(filepath: str, policy_rate_pct: float = None) -> pd.Series:
+def load_tcmb_rates(
+    filepath: str,
+    policy_rate_pct: float = None,
+    cache_path: str = "data",
+    auto_refresh: bool = True,
+) -> pd.Series:
     """
-    Tier 3: CSV dosyasından okur. Yoksa policy_rate_pct sabitiyle günlük bileşik faiz üretir.
+    Tier 1: TTL dolmuşsa web scraping ile günceller (TCMB → EVDS → Bigpara).
+    Tier 2: CSV dosyasından okur.
+    Tier 3: policy_rate_pct sabitiyle günlük yıllık faiz serisi üretir.
     """
+    if auto_refresh and _macro_stale(cache_path, "rate"):
+        try:
+            from lib import macro_scraper
+            df, src = macro_scraper.fetch_policy_rate_with_fallback()
+            _upsert_csv(filepath, df, key="Tarih")
+            _update_macro_cache(cache_path, "rate", df, src)
+        except Exception as exc:
+            warnings.warn(
+                f"Faiz scrape başarısız, mevcut CSV/sabit oran kullanılıyor: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
+
     if os.path.exists(filepath):
         df = pd.read_csv(filepath)
         if "Tarih" not in df.columns or "Faiz_Orani_Yillik_Pct" not in df.columns:
