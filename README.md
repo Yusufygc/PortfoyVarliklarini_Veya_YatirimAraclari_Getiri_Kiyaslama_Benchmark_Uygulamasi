@@ -89,29 +89,46 @@ Veri tamamlanamazsa Reel/TÜFE grafiği boş veya yanıltıcı çizilmez; kullan
 
 ## Kurulum
 
-Yerel Jupyter:
+Gereksinim: **Python 3.10 veya üzeri**.
+
+### Yerel Jupyter
 
 ```bash
+git clone https://github.com/Yusufygc/PortfoyVarliklarini_Veya_YatirimAraclari_Getiri_Kiyaslama_Benchmark_Uygulamasi.git
+cd PortfoyVarliklarini_Veya_YatirimAraclari_Getiri_Kiyaslama_Benchmark_Uygulamasi
 pip install -r requirements.txt
 jupyter notebook BenchmarkKarsilastirma.ipynb
 ```
 
-Kullanılan conda ortamında çalıştırmak için örnek:
+Conda ortamı örneği:
 
 ```powershell
-C:\Users\ysfygc\anaconda3\envs\BencmarkTakip\python.exe -m jupyter notebook BenchmarkKarsilastirma.ipynb
+C:\Users\<KULLANICI>\anaconda3\envs\BencmarkTakip\python.exe -m jupyter notebook BenchmarkKarsilastirma.ipynb
 ```
 
-Google Colab için önerilen akış:
+### Google Colab
+
+Yeni bir Colab notebook açın, ilk hücreye:
 
 ```python
-!git clone https://github.com/KULLANICI_ADINIZ/BenchmarkTakip.git
+!git clone https://github.com/Yusufygc/PortfoyVarliklarini_Veya_YatirimAraclari_Getiri_Kiyaslama_Benchmark_Uygulamasi.git BenchmarkTakip
 %cd BenchmarkTakip
+!pip install -r requirements.txt
 ```
+
+Sonra repo içindeki `BenchmarkKarsilastirma.ipynb` veya `PortfolyoBenchmark.ipynb` dosyalarını Colab'da açın (`File → Open notebook → GitHub` veya Drive'a kopyala). Notebook hücreleri Colab'ı otomatik algılar (`IN_COLAB` flag) ve `lib/` klasörünü `sys.path`'e ekler.
+
+**Drive ile kalıcı veri** (opsiyonel): işlem geçmişinizi (`transactions.csv`) Drive'da saklamak isterseniz Cell-2 Drive mount otomatik yapılır. `PORTFOLIO_DATA_DIR` çevre değişkeniyle özel klasör de seçebilirsiniz.
+
+### Yeni kullanıcı için ilk çalıştırma (`PortfolyoBenchmark.ipynb`)
+
+İlk açılışta `data/transactions.csv` yoksa "Henüz işlem yok" mesajı görünür — bu normal. Hücre 6'daki işlem formundan ilk alış/satış/nakit girişini ekleyin → `transactions.csv` otomatik oluşturulur, dashboard yenilenir. Şema referansı [aşağıda](#datatransactionscsv).
+
+### Veri klasörü önceliği
 
 Notebook'lar repo kökündeki `lib/` klasörünü otomatik bulur. Veri klasörü önceliği:
 
-1. `PORTFOLIO_DATA_DIR`
+1. `PORTFOLIO_DATA_DIR` çevre değişkeni (her ikisinde de geçerli)
 2. Colab'da varsa `/content/drive/MyDrive/PortfolioProject/`
 3. Repo içindeki `data/`
 
