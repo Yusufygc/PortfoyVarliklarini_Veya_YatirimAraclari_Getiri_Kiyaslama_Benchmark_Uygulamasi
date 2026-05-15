@@ -123,8 +123,8 @@ def build_donut_chart(
     current_values_tl: list,
 ) -> go.Figure:
     """hole=0.55. Hover: TL değer + ağırlık %."""
-    if abs(sum(current_weights) - 1.0) > 1e-6:
-        total = sum(current_weights)
+    total = sum(current_weights)
+    if total > 0 and abs(total - 1.0) > 1e-6:
         current_weights = [w / total for w in current_weights]
 
     fig = go.Figure(go.Pie(
