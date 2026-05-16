@@ -1,12 +1,36 @@
 import os
 import json
 import pickle
+import tempfile
 import warnings
 from datetime import datetime, timedelta
 from urllib.request import Request, urlopen
 
 import pandas as pd
 import yfinance as yf
+
+
+def _atomic_write_bytes(filepath: str, write_fn) -> None:
+    """Temp file + os.replace atomik yazma. write_fn(path) çağırılır.
+
+    İki süreç eşzamanlı yazmak isterse: her biri kendi tmp dosyasına yazar,
+    son replace kazanır; ama hiçbir kısmi yazma sızmaz.
+    """
+    parent = os.path.dirname(filepath) or "."
+    os.makedirs(parent, exist_ok=True)
+    base = os.path.basename(filepath)
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=base + ".", suffix=".tmp", dir=parent)
+    os.close(tmp_fd)
+    try:
+        write_fn(tmp_path)
+        os.replace(tmp_path, filepath)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        raise
 
 REQUIRED_PORTFOLIO_COLS = ["Varlık Adı", "Alış Tarihi", "Alış Fiyatı", "Miktar", "Komisyon"]
 REQUIRED_TRANSACTION_COLS = ["Tarih", "Varlık Adı", "İşlem Türü", "Fiyat", "Miktar", "Komisyon"]
@@ -174,8 +198,10 @@ def fetch_prices(
             except OSError:
                 pass
 
-    with open(cache_file, "wb") as f:
-        pickle.dump(df_filled, f)
+    def _write(path):
+        with open(path, "wb") as f:
+            pickle.dump(df_filled, f)
+    _atomic_write_bytes(cache_file, _write)
 
     if require_start_coverage:
         return _validate_price_coverage(df_filled, symbols, start, end)
@@ -215,6 +241,13 @@ def load_transactions_csv(filepath: str) -> pd.DataFrame:
     return df.sort_values("Tarih").reset_index(drop=True)
 
 
+_MACRO_CACHE_SCHEMA = {
+    "cpi": "CPI_Endeks",
+    "rate": "Faiz_Orani_Yillik_Pct",
+    "deposit_rate": "Faiz_Orani_Yillik_Pct",
+}
+
+
 def _macro_stale(cache_path: str, key: str) -> bool:
     cache_file = os.path.join(cache_path, MACRO_CACHE_FILE)
     if not os.path.exists(cache_file):
@@ -234,10 +267,24 @@ def _macro_stale(cache_path: str, key: str) -> bool:
     updated_at = entry.get("updated_at")
     if not updated_at:
         return True
-    return (datetime.now() - updated_at).days >= MACRO_TTL_DAYS
+    # total_seconds: 6 gün 23 saat henüz stale değil; 7 gün 1 dk stale.
+    return (datetime.now() - updated_at).total_seconds() >= MACRO_TTL_DAYS * 86400
 
 
 def _update_macro_cache(cache_path: str, key: str, df: pd.DataFrame, source: str) -> None:
+    """Cache yaz. Bilinen key için schema kontrolü yapılır; bozuk df reddedilir."""
+    if df is None or df.empty:
+        warnings.warn(
+            f"macro_cache yazma reddi: '{key}' için boş DataFrame.",
+            UserWarning, stacklevel=2,
+        )
+        return
+    needed = _MACRO_CACHE_SCHEMA.get(key)
+    if needed and needed not in df.columns:
+        raise ValueError(
+            f"macro_cache yazma reddi: '{key}' DataFrame'inde '{needed}' kolonu yok"
+        )
+
     os.makedirs(cache_path, exist_ok=True)
     cache_file = os.path.join(cache_path, MACRO_CACHE_FILE)
     cache = {}
@@ -248,13 +295,16 @@ def _update_macro_cache(cache_path: str, key: str, df: pd.DataFrame, source: str
         except Exception:
             cache = {}
     cache[key] = {"df": df.copy(), "source": source, "updated_at": datetime.now()}
-    with open(cache_file, "wb") as f:
-        pickle.dump(cache, f)
+
+    def _write(path):
+        with open(path, "wb") as f:
+            pickle.dump(cache, f)
+    _atomic_write_bytes(cache_file, _write)
 
 
 def _upsert_csv(filepath: str, new_df: pd.DataFrame, key: str = "Tarih") -> None:
     """Mevcut CSV ile yeni df'yi birleştir, key sütunundaki duplicate'lerde son kayıt kazanır.
-    Dosyaya dayfirst (GG.AA.YYYY) formatında yazar."""
+    Dosyaya dayfirst (GG.AA.YYYY) formatında, atomik (tmp + replace) yazar."""
     if os.path.exists(filepath):
         try:
             existing = pd.read_csv(filepath, encoding="utf-8")
@@ -272,8 +322,9 @@ def _upsert_csv(filepath: str, new_df: pd.DataFrame, key: str = "Tarih") -> None
     merged = merged.drop_duplicates(subset=[key], keep="last").sort_values(key).reset_index(drop=True)
     merged[key] = merged[key].dt.strftime("%d.%m.%Y")
 
-    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
-    merged.to_csv(filepath, index=False, encoding="utf-8")
+    def _write(path):
+        merged.to_csv(path, index=False, encoding="utf-8")
+    _atomic_write_bytes(filepath, _write)
 
 
 def load_cpi_series(filepath: str, cache_path: str = "data", auto_refresh: bool = True) -> pd.Series:
@@ -550,3 +601,72 @@ def load_tcmb_rates(
     end_dt = datetime.today()
     days = pd.date_range(start_dt, end_dt, freq="D")
     return pd.Series(policy_rate_pct, index=days, name="Faiz_Orani_Yillik_Pct")
+
+
+def load_deposit_rates(
+    filepath: str,
+    fallback_policy_rate_series: pd.Series = None,
+    cache_path: str = "data",
+    auto_refresh: bool = True,
+) -> pd.Series:
+    """
+    Bankaların TL mevduatlara uyguladığı ağırlıklı ortalama brüt yıllık faiz serisi.
+
+    Tier 1: TTL dolmuşsa WorldBank (tarihsel yıllık) + Hesapkurdu (bugün spot)
+            scrape edilir, CSV'ye upsert yapılır.
+    Tier 2: CSV'den okunur (günlük forward-fill).
+    Tier 3: fallback_policy_rate_series verildiyse o seriyi döner (warning bas).
+    """
+    if auto_refresh and _macro_stale(cache_path, "deposit_rate"):
+        try:
+            from lib import macro_scraper
+            df, src = macro_scraper.fetch_deposit_rate_with_fallback()
+            _upsert_csv(filepath, df, key="Tarih")
+            _update_macro_cache(cache_path, "deposit_rate", df, src)
+        except Exception as exc:
+            warnings.warn(
+                f"Mevduat faizi scrape başarısız, mevcut CSV/politika faizine düşülüyor: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    if os.path.exists(filepath):
+        df = pd.read_csv(filepath, encoding="utf-8")
+        if "Tarih" not in df.columns or "Faiz_Orani_Yillik_Pct" not in df.columns:
+            raise ValueError("deposit_rates.csv 'Tarih' ve 'Faiz_Orani_Yillik_Pct' sütunları içermeli.")
+        df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True)
+        s = df.set_index("Tarih")["Faiz_Orani_Yillik_Pct"].sort_index()
+        daily_idx = pd.date_range(s.index.min(), datetime.today(), freq="D")
+        return s.reindex(daily_idx).ffill()
+
+    if fallback_policy_rate_series is not None:
+        warnings.warn(
+            "Mevduat faizi verisi yok, politika faizine düşülüyor (benchmark daha az doğru).",
+            UserWarning, stacklevel=2,
+        )
+        return fallback_policy_rate_series
+
+    raise ValueError(
+        "deposit_rates.csv bulunamadı ve fallback_policy_rate_series verilmedi."
+    )
+
+
+def get_latest_policy_rate(filepath: str, fallback: float = 37.0) -> float:
+    """tcmb_rates.csv son satır faiz oranı; dosya yok/bozuk ise fallback değer.
+
+    Notebook'lar `TCMB_POLICY_RATE_PCT` sabitini bu fonksiyondan okur ki
+    TCMB rate değişimlerinde manuel güncelleme gerekmesin.
+    """
+    if not os.path.exists(filepath):
+        return fallback
+    try:
+        df = pd.read_csv(filepath, encoding="utf-8")
+        if "Tarih" not in df.columns or "Faiz_Orani_Yillik_Pct" not in df.columns:
+            return fallback
+        df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
+        df = df.dropna(subset=["Tarih"]).sort_values("Tarih")
+        if df.empty:
+            return fallback
+        return float(df["Faiz_Orani_Yillik_Pct"].iloc[-1])
+    except Exception:
+        return fallback
