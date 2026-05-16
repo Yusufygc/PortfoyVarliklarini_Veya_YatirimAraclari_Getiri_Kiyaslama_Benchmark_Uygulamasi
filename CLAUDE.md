@@ -46,7 +46,6 @@ data/deposit_rates.csv    banka mevduat ortalaması (7 gün TTL, scrape zinciri)
 ## Commit tercihleri
 
 - Her tier/konu ayrı commit.
-- `Co-Authored-By:` satırı her commit'e ekle.
 - README wiki bölümü varsa değişiklikle birlikte güncelle.
 
 ## Bilinen limitasyonlar
