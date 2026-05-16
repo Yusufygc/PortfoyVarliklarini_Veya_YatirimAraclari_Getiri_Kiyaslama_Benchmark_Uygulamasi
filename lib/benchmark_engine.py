@@ -1,17 +1,24 @@
+import warnings
+
 import pandas as pd
 
+# Sabitler `lib/constants.py`'de tutulur; geriye uyumluluk için yeniden export.
+from constants import (
+    USD_NATIVE_SYMBOLS,
+    TL_NATIVE_SYMBOLS,
+    GRAM_SYMBOLS,
+    TROY_OZ_TO_GRAM,
+)
 
-# USD bazlı semboller — TL'ye çevirmek için USDTRY ile çarpılır
-USD_NATIVE_SYMBOLS = {"GC=F", "SI=F"}
-
-# TL bazlı semboller — USD modunda USDTRY ile bölünür
-TL_NATIVE_SYMBOLS = {"XU100.IS", "USDTRY=X", "EURTRY=X"}
-
-# Troy ons → gram dönüşümü (1 troy ons = 31.1035 gram)
-TROY_OZ_TO_GRAM = 31.1035
-
-# Bu semboller troy ons fiyatı verir — TL/gram veya USD/gram için ÷ 31.1035 uygulanır
-GRAM_SYMBOLS = {"GC=F", "SI=F"}
+__all__ = [
+    "USD_NATIVE_SYMBOLS",
+    "TL_NATIVE_SYMBOLS",
+    "GRAM_SYMBOLS",
+    "TROY_OZ_TO_GRAM",
+    "normalize_to_100",
+    "build_benchmark_series",
+    "build_deposit_series",
+]
 
 
 def normalize_to_100(price_series: pd.Series, start_date: str) -> pd.Series:
@@ -120,10 +127,22 @@ def build_deposit_series(
     Mevduat faizini normalize edilmiş kümülatif getiri endeksine çevirir.
     tcmb_rates: günlük yıllık faiz oranı (%) serisi.
     Returns: pd.Series index=date, values=cumulative index (başlangıç=100)
+
+    NOT: tcmb_rates start_date'ten sonra başlıyorsa bfill ileri bir oranı geriye
+    yansıtır; bu durumda UserWarning basılır (sessiz hatalı yorum riski).
     """
     date_range = pd.date_range(start_date, end_date, freq="B")
-    rates = tcmb_rates.reindex(date_range).ffill().bfill()
-    daily_rates = (1 + rates / 100) ** (1 / 365) - 1
+    filled = tcmb_rates.reindex(date_range).ffill()
+    if pd.isna(filled.iloc[0]):
+        first_valid = tcmb_rates.first_valid_index()
+        warnings.warn(
+            f"Mevduat/faiz verisi {start_date}'i kapsamıyor (ilk veri: "
+            f"{first_valid.date() if first_valid is not None else 'yok'}). "
+            "Önceki dönem için sonraki bir oran geriye yansıtıldı (yaklaşık değer).",
+            UserWarning, stacklevel=2,
+        )
+        filled = filled.bfill()
+    daily_rates = (1 + filled / 100) ** (1 / 365) - 1
     cumulative = (1 + daily_rates).cumprod()
     cumulative = cumulative / cumulative.iloc[0] * 100
     cumulative.name = "Mevduat"
