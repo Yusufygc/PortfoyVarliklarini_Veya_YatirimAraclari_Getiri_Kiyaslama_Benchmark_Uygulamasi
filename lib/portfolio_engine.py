@@ -145,7 +145,13 @@ def compute_portfolio_value_series(
             "units_held": position_tracker.copy(),
         })
 
-    return pd.DataFrame(records).set_index("date")
+    df = pd.DataFrame(records)
+    if df.empty:
+        return pd.DataFrame(
+            columns=["total_value_tl", "total_value_usd", "asset_values_tl", "units_held"],
+            index=pd.DatetimeIndex([], name="date"),
+        )
+    return df.set_index("date")
 
 
 def compute_asset_contributions(
@@ -209,15 +215,20 @@ def compute_asset_contributions(
             "pnl_tl": pnl_tl,
             "pnl_pct": pnl_pct,
             "value_tl": value_tl,
+            "cost_tl": cost_tl,
         })
 
     if not rows:
         return pd.DataFrame(columns=["Varlık Adı", "pnl_tl", "pnl_pct", "weight_pct", "contribution_pct"])
 
     df = pd.DataFrame(rows)
+    # Ağırlık: güncel piyasa değerine göre (portföy dağılımı)
     df["weight_pct"] = df["value_tl"] / total_portfolio_value * 100 if total_portfolio_value > 0 else 0.0
-    df["contribution_pct"] = df["weight_pct"] / 100 * df["pnl_pct"]
-    return df.drop(columns=["value_tl"]).sort_values("contribution_pct", ascending=False).reset_index(drop=True)
+    # Katkı: maliyet ağırlığı × getiri (Brinson attribution)
+    # Toplam katkı = portföy toplam getirisi olur
+    total_cost = df["cost_tl"].sum()
+    df["contribution_pct"] = (df["cost_tl"] / total_cost * df["pnl_pct"]) if total_cost > 0 else 0.0
+    return df.drop(columns=["value_tl", "cost_tl"]).sort_values("contribution_pct", ascending=False).reset_index(drop=True)
 
 
 def _nearest_price(series: pd.Series, date: pd.Timestamp):
