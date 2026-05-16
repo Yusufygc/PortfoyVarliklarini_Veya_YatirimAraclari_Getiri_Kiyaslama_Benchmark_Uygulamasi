@@ -106,17 +106,51 @@ Conda ortamı örneği:
 C:\Users\<KULLANICI>\anaconda3\envs\BencmarkTakip\python.exe -m jupyter notebook BenchmarkKarsilastirma.ipynb
 ```
 
-### Google Colab
+### Google Colab (Bulut Kurulumu)
 
-Colab'da **File → Open notebook → GitHub** sekmesine gidip repo URL'sini yapıştırın:
+Projeyi bilgisayarınıza hiçbir şey kurmadan, doğrudan Google Colab üzerinden çalıştırabilirsiniz. Yaptığınız değişikliklerin ve verilerin kaybolmaması için projeyi geçici Colab alanına değil, Google Drive'ınıza kurmanız önerilir.
 
+#### Adım 1: Projeyi Drive'a Klonlama (Sadece Bir Kez Yapılacak)
+
+1. Yeni ve boş bir [Google Colab](https://colab.research.google.com/) not defteri açın.
+2. Aşağıdaki kodu kopyalayıp bir hücreye yapıştırın ve çalıştırarak Google Drive'ınızı Colab'a bağlayın (çıkan ekranda izinleri onaylayın):
+
+```python
+from google.colab import drive
+drive.mount('/content/drive')
 ```
-https://github.com/Yusufygc/PortfoyVarliklarini_Veya_YatirimAraclari_Getiri_Kiyaslama_Benchmark_Uygulamasi
+
+3. Yeni bir hücre açın, çalışma dizinini Drive'ınız olarak ayarlayın ve projeyi indirin:
+
+```python
+%cd /content/drive/MyDrive/
+!git clone https://github.com/Yusufygc/PortfoyVarliklarini_Veya_YatirimAraclari_Getiri_Kiyaslama_Benchmark_Uygulamasi.git
 ```
 
-`BenchmarkKarsilastirma.ipynb` veya `PortfolyoBenchmark.ipynb` seçin ve açın. Cell-1'i çalıştırın; repo klonu ve `pip install` otomatik yapılır.
+(Bu işlemden sonra proje dosyaları kalıcı olarak Google Drive'ınıza kaydedilmiş olacaktır.)
 
-**Drive ile kalıcı veri** (opsiyonel): işlem geçmişinizi (`transactions.csv`) Drive'da saklamak isterseniz Cell-2 Drive mount otomatik yapılır. `PORTFOLIO_DATA_DIR` çevre değişkeniyle özel klasör de seçebilirsiniz.
+#### Adım 2: Proje Dosyalarını (.ipynb) Açmak ve Çalıştırmak
+
+Colab'ın sol tarafındaki dosya yöneticisinden `.ipynb` uzantılı not defterlerine çift tıklamak dosyayı indirir, açmaz. Dosyaları tarayıcıda açıp çalıştırmak için şu yöntemi kullanın:
+
+**Google Drive Üzerinden Açma (Önerilen Yöntem):**
+
+1. Tarayıcınızdan [Google Drive](https://drive.google.com)'ınızı açın.
+2. İndirilen `PortfoyVarliklarini_Veya_YatirimAraclari_Getiri_Kiyaslama_Benchmark_Uygulamasi` klasörüne girin.
+3. Çalıştırmak istediğiniz deftere (örneğin `BenchmarkKarsilastirma.ipynb`) sağ tıklayın.
+4. **Birlikte aç → Google Colaboratory** seçeneğine tıklayın.
+
+(Alternatif olarak Colab arayüzünde üst menüden **Dosya > Not defteri aç > Google Drive** sekmesini izleyerek de dosyalarınızı bulup açabilirsiniz.)
+
+> ⚠️ **Önemli Not (Tekrar Kullanım İçin)**
+>
+> Projeyi Google Drive'ınızdan her açtığınızda, kodların `data` veya `lib` gibi proje içi klasörlere sorunsuz erişebilmesi için defterin ilk hücresine şu kodu ekleyip bir kez çalıştırmayı unutmayın:
+>
+> ```python
+> from google.colab import drive
+> drive.mount('/content/drive')
+> %cd /content/drive/MyDrive/PortfoyVarliklarini_Veya_YatirimAraclari_Getiri_Kiyaslama_Benchmark_Uygulamasi
+> ```
 
 ### Yeni kullanıcı için ilk çalıştırma (`PortfolyoBenchmark.ipynb`)
 
@@ -136,27 +170,19 @@ Notebook'lar repo kökündeki `lib/` klasörünü otomatik bulur. Veri klasörü
 BenchmarkTakip/
 ├── BenchmarkKarsilastirma.ipynb
 ├── PortfolyoBenchmark.ipynb
-├── BenchmarkVeriTest.ipynb
 ├── lib/
-│   ├── constants.py         # Paylaşılan sabitler (TROY_OZ_TO_GRAM, sembol setleri)
 │   ├── data_loader.py
-│   ├── macro_scraper.py
 │   ├── benchmark_engine.py
 │   ├── chart_builder.py
 │   ├── chart_builder_v2.py
 │   ├── portfolio_engine.py
-│   ├── portfoy_dashboard.py
 │   └── widgets.py
 ├── data/
 │   ├── cpi_turkey.csv
 │   ├── tcmb_rates.csv
-│   ├── deposit_rates.csv
 │   ├── portfolio.csv
 │   └── transactions.csv
 ├── docs/wiki/
-│   ├── architecture.md
-│   ├── hesaplama-notlari.md
-│   └── veri-dosyalari.md
 └── requirements.txt
 ```
 
@@ -178,26 +204,7 @@ Tarih,Faiz_Orani_Yillik_Pct
 2023-01-01,42.5
 ```
 
-TCMB **politika faizi** (1-Hafta Repo). `get_latest_policy_rate()` ile notebook'lar `TCMB_POLICY_RATE_PCT` sabitini bu dosyanın son satırından okur — TCMB rate kararı değişince notebook manuel güncellenmez. Dosya yok/bozuksa Cell-3'teki fallback (37%) kullanılır.
-
-### `data/deposit_rates.csv`
-
-```csv
-Tarih,Faiz_Orani_Yillik_Pct
-2024-12-31,71.04
-2026-05-16,44.88
-```
-
-Bankaların TL mevduatlara uyguladığı **ağırlıklı ortalama brüt yıllık faiz**. "Mevduat" benchmark'ı için kullanılır (politika faizi değil — TCMB ve banka oranı arasında 5-10 puan fark olur).
-
-**Kaynak zinciri** (otomatik scrape, TTL 7 gün):
-
-1. **World Bank Open Data** (`FR.INR.DPST`) — Türkiye yıllık brüt mevduat faizi (1978-2024).
-2. **Hesapkurdu.com** — 8 banka için bugünkü ortalama spot.
-3. CSV mevcut ama scrape fail → CSV kullanılır (uyarı basılır).
-4. CSV yoksa → `fallback_policy_rate_series` (politika faizi) devreye girer + uyarı.
-
-**Limitasyon (2025 boşluğu):** WorldBank yıllık veri 2024-12-31'de bitiyor, Hesapkurdu sadece bugün spot. Arada 12+ aylık boşluk olduğunda `_extend_deposit_rate_linear()` **lineer interpolasyon** ile ~180 günlük ara noktalar üretir (örn. 2025-06, 2025-12). Bu yaklaşık değerdir, gerçek TCMB verisi değildir; UserWarning basılır. Daha hassas 2025 değeri için CSV'ye manuel satır ekleyebilirsiniz (örn. TCMB EVDS'den 1-3 ay vadeli mevduat ortalaması).
+Mevduat serisi için kullanılır. Dosya yoksa sistem varsayılan sabit faiz oranıyla mevduat endeksi üretir.
 
 ### `data/portfolio.csv`
 
@@ -219,14 +226,8 @@ Geçerli işlem türleri: `ALIŞ`, `SATIŞ`, `NAKIT_GIRIS`, `NAKIT_CIKIS`.
 
 - Tüm benchmark serileri seçilen başlangıç tarihinde `100` olacak şekilde normalize edilir.
 - Fiyat serilerinde başlangıç öncesi eksik veriler geriye doldurulmaz; veri yoksa sahte 100 serisi üretilmez.
-- yfinance fiyat cache'i `data/prices_cache.pkl` içinde tutulur (atomik yazma, 8 saatlik TTL).
+- yfinance fiyat cache'i `data/prices_cache.pkl` içinde tutulur.
 - yfinance zaman dilimi cache'i proje içindeki yazılabilir cache dizinine alınır.
 - Treemap hover'ında TL tutarlar Türkçe okunabilir biçimde gösterilir: `₺+764.911,1`.
-- WAC komisyon simetrisi: ALIŞ ve SATIŞ işlemleri komisyonu birim başına dağıtır; `realized_pnl` gerçek ekonomik karı yansıtır.
-- HTTP scraping 3 deneme + üstel backoff (2/4/8 sn) ile korunur; geçici 429/5xx otomatik yeniden denenir.
-- CSV yazma işlemleri atomik (`mkstemp` + `os.replace`); eşzamanlı iki kullanıcıda veri bütünlüğü korunur.
-- `TCMB_POLICY_RATE_PCT` her notebook Cell-5'te `tcmb_rates.csv` son satırından okunur; sabit değil.
-
-Detaylı hesaplama notları için `docs/wiki/` klasöründeki wiki dosyalarına bakın.
 
 Detaylı hesaplama notları için `docs/wiki/` klasöründeki wiki dosyalarına bakın.
