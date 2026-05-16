@@ -3,7 +3,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from benchmark_engine import TROY_OZ_TO_GRAM, GRAM_SYMBOLS
+from constants import TROY_OZ_TO_GRAM, GRAM_SYMBOLS
 
 
 def _scalar(val) -> float:
@@ -37,7 +37,10 @@ def compute_wac(transactions: pd.DataFrame) -> dict:
             s["units"] += row["Miktar"]
             s["wac"] = total_cost / s["units"] if s["units"] > 0 else 0.0
         elif islem == "SATIŞ":
-            realized = (row["Fiyat"] - s["wac"]) * row["Miktar"] - row["Komisyon"]
+            # Komisyon ALIŞ'ta birim başına eklendiği için (line 36),
+            # SATIŞ'ta da birim başına çıkarılmalı (simetri).
+            qty = max(row["Miktar"], 1e-9)
+            realized = (row["Fiyat"] - row["Komisyon"] / qty - s["wac"]) * row["Miktar"]
             s["realized_pnl"] += realized
             s["units"] = max(0.0, s["units"] - row["Miktar"])
             # WAC değişmez
@@ -145,81 +148,6 @@ def compute_portfolio_value_series(
     return pd.DataFrame(records).set_index("date")
 
 
-def compute_twrr(
-    portfolio_values: pd.DataFrame,
-    transactions: pd.DataFrame,
-    currency: str = "TL",
-) -> pd.Series:
-    """
-    Modified Dietz yaklaşımıyla TWRR. Alt-dönem sınırı = her NAKIT_GIRIS/CIKIS.
-    Returns: pd.Series index=date, values=cumulative index (başlangıç=100)
-    """
-    value_col = "total_value_tl" if currency == "TL" else "total_value_usd"
-    values = portfolio_values[value_col].copy()
-
-    cash_flows = transactions[transactions["İşlem Türü"].isin(["NAKIT_GIRIS", "NAKIT_CIKIS"])].copy()
-    cash_flows["net"] = cash_flows.apply(
-        lambda r: r["Fiyat"] * r["Miktar"] if r["İşlem Türü"] == "NAKIT_GIRIS" else -r["Fiyat"] * r["Miktar"],
-        axis=1,
-    )
-
-    flow_dates = sorted(cash_flows["Tarih"].dt.normalize().unique().tolist())
-    all_dates = values.index.tolist()
-
-    # Dönem sınırları
-    breakpoints = [all_dates[0]] + flow_dates + [all_dates[-1]]
-    breakpoints = sorted(set(breakpoints))
-
-    sub_returns = []
-    for i in range(len(breakpoints) - 1):
-        start = breakpoints[i]
-        end = breakpoints[i + 1]
-
-        period_vals = values.loc[start:end]
-        if len(period_vals) < 2:
-            continue
-
-        v_start = period_vals.iloc[0]
-        v_end = period_vals.iloc[-1]
-
-        # Dönem içi nakit akışları (Modified Dietz ağırlığı)
-        period_flows = cash_flows[
-            (cash_flows["Tarih"] >= start) & (cash_flows["Tarih"] < end)
-        ]
-        weighted_cf = 0.0
-        period_len = max((end - start).days, 1)
-        for _, cf_row in period_flows.iterrows():
-            days_remaining = (end - cf_row["Tarih"]).days
-            weighted_cf += cf_row["net"] * (days_remaining / period_len)
-
-        denominator = v_start + weighted_cf
-        if denominator == 0:
-            sub_return = 0.0
-        else:
-            sub_return = (v_end - v_start - period_flows["net"].sum()) / denominator
-
-        sub_returns.append((start, end, sub_return))
-
-    # Kümülatif indeks inşa et
-    index_series = pd.Series(index=all_dates, dtype=float)
-    index_series.iloc[0] = 100.0
-    cumulative = 1.0
-
-    sub_idx = 0
-    for i, date in enumerate(all_dates[1:], 1):
-        prev_date = all_dates[i - 1]
-        # Bu gün bir dönem sonuysa yeni alt-getiriyi uygula
-        if sub_idx < len(sub_returns) and date >= sub_returns[sub_idx][1]:
-            cumulative *= (1 + sub_returns[sub_idx][2])
-            sub_idx += 1
-        prev_v = values.loc[prev_date]
-        curr_v = values.loc[date]
-        daily_r = (curr_v - prev_v) / prev_v if prev_v != 0 else 0.0
-        index_series.iloc[i] = index_series.iloc[i - 1] * (1 + daily_r)
-
-    return index_series
-
-
 def compute_asset_contributions(
     transactions: pd.DataFrame,
     prices: pd.DataFrame,
@@ -290,20 +218,6 @@ def compute_asset_contributions(
     df["weight_pct"] = df["value_tl"] / total_portfolio_value * 100 if total_portfolio_value > 0 else 0.0
     df["contribution_pct"] = df["weight_pct"] / 100 * df["pnl_pct"]
     return df.drop(columns=["value_tl"]).sort_values("contribution_pct", ascending=False).reset_index(drop=True)
-
-
-def compute_real_return_series(
-    nominal_series: pd.Series,
-    cpi_series: pd.Series,
-) -> pd.Series:
-    """
-    Nominal TL serisini TÜFE ile deflate eder. Başlangıç=100.
-    """
-    aligned_cpi = cpi_series.reindex(nominal_series.index).ffill().bfill()
-    cpi_base = aligned_cpi.iloc[0]
-    real = nominal_series / (aligned_cpi / cpi_base)
-    real = real / real.iloc[0] * 100
-    return real
 
 
 def _nearest_price(series: pd.Series, date: pd.Timestamp):
