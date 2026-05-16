@@ -13,6 +13,14 @@ BENCHMARK_COLORS = [
 PORTFOLIO_COLOR = "#E63946"
 GAIN_COLOR = "#2DC653"
 LOSS_COLOR = "#E63946"
+
+
+def format_turkish_lira(value, decimals: int = 0) -> str:
+    sign = "+" if value >= 0 else "-"
+    formatted = f"{abs(float(value)):,.{decimals}f}"
+    return sign + formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
 TURKISH_MONTHS = [
     "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
     "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
@@ -127,15 +135,16 @@ def build_donut_chart(
     if total > 0 and abs(total - 1.0) > 1e-6:
         current_weights = [w / total for w in current_weights]
 
+    formatted_values = [format_turkish_lira(v) for v in current_values_tl]
     fig = go.Figure(go.Pie(
         labels=asset_names,
         values=current_weights,
         hole=0.55,
-        customdata=current_values_tl,
+        customdata=formatted_values,
         hovertemplate=(
             "<b>%{label}</b><br>"
             "Ağırlık: %{percent}<br>"
-            "Değer: ₺%{customdata:,.0f}<extra></extra>"
+            "Değer: ₺%{customdata}<extra></extra>"
         ),
         textinfo="label+percent",
     ))
@@ -193,7 +202,7 @@ def build_summary_table(contributions: pd.DataFrame) -> go.Figure:
         return f"{v:+.2f}%"
 
     def fmt_tl(v):
-        return f"₺{v:+,.0f}"
+        return f"₺{format_turkish_lira(v)}"
 
     fig = go.Figure(go.Table(
         header=dict(

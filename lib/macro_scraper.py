@@ -15,7 +15,10 @@ Site yapısı değişirse buradan tek satır düzenlemekle güncellenebilir.
 from __future__ import annotations
 
 import io
+import logging
+import os
 import re
+import time
 import warnings
 from datetime import datetime
 from typing import Tuple
@@ -23,6 +26,8 @@ from typing import Tuple
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger("macro_scraper")
 
 HTTP_TIMEOUT = 15
 HTTP_HEADERS = {
@@ -43,6 +48,12 @@ URL_TCMB_1W_REPO_EN = "https://www.tcmb.gov.tr/wps/wcm/connect/EN/TCMB+EN/Main+M
 URL_TCMB_1W_REPO_TR = "https://www.tcmb.gov.tr/wps/wcm/connect/TR/TCMB+TR/Main+Menu/Temel+Faaliyetler/Para+Politikasi/Merkez+Bankasinin+Faizleri/1+Hafta+Repo"
 URL_EVDS_POLICY_RATE = "https://evds2.tcmb.gov.tr/index.php?/evds/serieMarket/collapse_2/5949411/DataGroup/turkish/bie_haftalikfaiz/"
 
+URL_WORLDBANK_DEPOSIT_TR = (
+    "https://api.worldbank.org/v2/country/TR/indicator/FR.INR.DPST"
+    "?format=json&per_page=100"
+)
+URL_HESAPKURDU_DEPOSIT = "https://www.hesapkurdu.com/mevduat"
+
 # CPI: en az 6 aylık veri ve son satır 60 günden eski olmamalı
 MIN_CPI_ROWS = 6
 MAX_CPI_AGE_DAYS = 60
@@ -55,10 +66,33 @@ MAX_RATE_AGE_DAYS = 365
 # HTTP yardımcısı
 # ---------------------------------------------------------------------------
 
-def _http_get(url: str) -> requests.Response:
-    resp = requests.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True)
-    resp.raise_for_status()
-    return resp
+def _http_get(url: str, max_attempts: int = 3) -> requests.Response:
+    """HTTP GET + retry. 429/5xx/timeout → backoff (2,4 sn). 4xx → no retry."""
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.get(
+                url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True
+            )
+            if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                raise requests.HTTPError(
+                    f"HTTP {resp.status_code} for {url}", response=resp
+                )
+            resp.raise_for_status()
+            return resp
+        except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
+            last_exc = exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status and 400 <= status < 500 and status != 429:
+                raise
+            if attempt < max_attempts - 1:
+                wait = 2 ** attempt * 2
+                logger.warning(
+                    "HTTP %s attempt %d/%d failed (%s); retrying in %ds",
+                    url, attempt + 1, max_attempts, exc, wait,
+                )
+                time.sleep(wait)
+    raise last_exc
 
 
 def _read_html_tables(html: str) -> list:
@@ -169,7 +203,7 @@ def tcmb_changes_to_index(changes_df: pd.DataFrame, baseline_csv_path: str) -> p
     TCMB'den çekilen MoM% serisini, mevcut CSV'deki son endeks değeri baseline alınarak
     compound ile endeks serisine çevirir. Yalnızca baseline'dan SONRA gelen aylar üretilir.
     """
-    if not pd.io.common.file_exists(baseline_csv_path):
+    if not os.path.exists(baseline_csv_path):
         raise RuntimeError(f"baseline CSV yok: {baseline_csv_path}")
 
     base = pd.read_csv(baseline_csv_path)
@@ -478,6 +512,7 @@ def fetch_cpi_with_fallback(baseline_csv_path: str = None) -> Tuple[pd.DataFrame
             return df, name
         except Exception as exc:
             errors.append(f"{name}: {exc}")
+            logger.warning("CPI scrape kaynağı %s başarısız: %s", name, exc)
             warnings.warn(f"CPI scrape kaynağı {name} başarısız: {exc}", UserWarning, stacklevel=2)
     raise RuntimeError("Tüm CPI kaynakları başarısız:\n" + "\n".join(errors))
 
@@ -496,5 +531,156 @@ def fetch_policy_rate_with_fallback() -> Tuple[pd.DataFrame, str]:
             return df, name
         except Exception as exc:
             errors.append(f"{name}: {exc}")
+            logger.warning("Faiz scrape kaynağı %s başarısız: %s", name, exc)
             warnings.warn(f"Faiz scrape kaynağı {name} başarısız: {exc}", UserWarning, stacklevel=2)
     raise RuntimeError("Tüm faiz kaynakları başarısız:\n" + "\n".join(errors))
+
+
+# ---------------------------------------------------------------------------
+# Mevduat faizi (gerçek bankaların TL mevduat ortalama brüt faizi)
+# ---------------------------------------------------------------------------
+
+def scrape_worldbank_deposit_rate() -> pd.DataFrame:
+    """World Bank Open Data — Turkey Deposit Interest Rate (FR.INR.DPST).
+    Yıllık brüt faiz, kaynak TCMB. Auth gerektirmez."""
+    resp = _http_get(URL_WORLDBANK_DEPOSIT_TR)
+    payload = resp.json()
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise RuntimeError("WorldBank: beklenmeyen JSON yapısı")
+    observations = payload[1] or []
+    rows = []
+    for obs in observations:
+        value = obs.get("value")
+        year = obs.get("date")
+        if value is None or year is None:
+            continue
+        try:
+            rate = float(value)
+        except (TypeError, ValueError):
+            continue
+        rows.append((pd.Timestamp(f"{year}-12-31"), rate))
+    if not rows:
+        raise RuntimeError("WorldBank: dolu satır yok")
+    df = pd.DataFrame(rows, columns=["Tarih", "Faiz_Orani_Yillik_Pct"])
+    df = df.sort_values("Tarih").reset_index(drop=True)
+    # Yıllık kayıt 365 günden eski olabilir; _validate_rate'i atlayıp özel kontrol:
+    if len(df) < MIN_RATE_ROWS:
+        raise ValueError(f"WorldBank: yetersiz satır ({len(df)} < {MIN_RATE_ROWS})")
+    if (df["Faiz_Orani_Yillik_Pct"] < 0).any() or (df["Faiz_Orani_Yillik_Pct"] > 200).any():
+        raise ValueError("WorldBank: faiz oranı makul aralık dışında")
+    return df
+
+
+def scrape_hesapkurdu_deposit_rate_today() -> pd.DataFrame:
+    """Hesapkurdu.com güncel banka mevduat faizi tablosu — bugünkü ortalama.
+    Tek satırlık DataFrame döner. Defansif kolon tespiti: önce isim, sonra
+    yüzde-işaretli sayı kolonunu heuristik olarak bul."""
+    resp = _http_get(URL_HESAPKURDU_DEPOSIT)
+    tables = _read_html_tables(resp.text)
+
+    target, faiz_col = None, None
+    # 1) isim eşleşmesi
+    for t in tables:
+        for col in t.columns:
+            if "faiz oran" in str(col).lower():
+                target, faiz_col = t, col
+                break
+        if target is not None:
+            break
+
+    # 2) heuristik: yüzde-işaretli ya da virgüllü ondalık sayı kolonu
+    if target is None:
+        for t in tables:
+            for col in t.columns:
+                sample = t[col].astype(str).head(15)
+                hits = sample.str.contains(r"%|\d+,\d+", regex=True, na=False).sum()
+                if hits >= 3:
+                    target, faiz_col = t, col
+                    break
+            if target is not None:
+                break
+
+    if target is None:
+        raise RuntimeError("Hesapkurdu: yüzdesel faiz kolonu içeren tablo bulunamadı")
+
+    rates = []
+    for raw in target[faiz_col]:
+        try:
+            rates.append(_parse_tr_number(raw))
+        except ValueError:
+            continue
+    if len(rates) < 3:
+        raise RuntimeError(f"Hesapkurdu: yetersiz faiz satırı ({len(rates)} < 3)")
+    avg = sum(rates) / len(rates)
+    if avg < 0 or avg > 200:
+        raise ValueError(f"Hesapkurdu: ortalama faiz makul aralık dışında ({avg})")
+    today = pd.Timestamp(datetime.today().date())
+    return pd.DataFrame([(today, avg)], columns=["Tarih", "Faiz_Orani_Yillik_Pct"])
+
+
+def _extend_deposit_rate_linear(
+    df: pd.DataFrame, gap_threshold_days: int = 180
+) -> pd.DataFrame:
+    """Ardışık iki nokta arası `gap_threshold_days`+ ise lineer interpolasyon
+    noktaları ekler. Yaklaşık değer; gerçek TCMB verisi değil — UserWarning basılır.
+
+    WorldBank yıllık + Hesapkurdu bugün → arada 1-2 yıl boşluk oluyor; ffill
+    eski oranı tüm boşluk boyunca taşıyarak gerçeklikten sapıyordu.
+    """
+    df = df.sort_values("Tarih").reset_index(drop=True)
+    if len(df) < 2:
+        return df
+    rows = []
+    for i in range(1, len(df)):
+        t0 = df.loc[i - 1, "Tarih"]
+        t1 = df.loc[i, "Tarih"]
+        days = (t1 - t0).days
+        if days <= gap_threshold_days:
+            continue
+        r0 = df.loc[i - 1, "Faiz_Orani_Yillik_Pct"]
+        r1 = df.loc[i, "Faiz_Orani_Yillik_Pct"]
+        for offset in range(gap_threshold_days, days, gap_threshold_days):
+            ratio = offset / days
+            rows.append((t0 + pd.Timedelta(days=offset), r0 + (r1 - r0) * ratio))
+    if not rows:
+        return df
+    logger.warning(
+        "Mevduat verisinde %d+ gün boşluk; %d ara nokta lineer interpolasyon ile dolduruldu",
+        gap_threshold_days, len(rows),
+    )
+    warnings.warn(
+        f"Mevduat verisinde {gap_threshold_days}+ gün boşluk var; "
+        f"{len(rows)} ara nokta lineer interpolasyon ile dolduruldu "
+        "(yaklaşık değer, gerçek TCMB verisi değil).",
+        UserWarning, stacklevel=2,
+    )
+    extra = pd.DataFrame(rows, columns=["Tarih", "Faiz_Orani_Yillik_Pct"])
+    return pd.concat([df, extra], ignore_index=True).sort_values("Tarih").reset_index(drop=True)
+
+
+def fetch_deposit_rate_with_fallback() -> Tuple[pd.DataFrame, str]:
+    """Mevduat faizi için kaynak birleştirme:
+    WorldBank (tarihsel yıllık) + Hesapkurdu (bugün spot).
+    En az biri başarılı olmalı. İkisi de fail → RuntimeError.
+    """
+    parts = []
+    sources_used = []
+    errors = []
+    for name, fn in [("WORLDBANK", scrape_worldbank_deposit_rate),
+                     ("HESAPKURDU", scrape_hesapkurdu_deposit_rate_today)]:
+        try:
+            parts.append(fn())
+            sources_used.append(name)
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            logger.warning("Mevduat faizi kaynağı %s başarısız: %s", name, exc)
+            warnings.warn(
+                f"Mevduat faizi kaynağı {name} başarısız: {exc}",
+                UserWarning, stacklevel=2,
+            )
+    if not parts:
+        raise RuntimeError("Tüm mevduat faizi kaynakları başarısız:\n" + "\n".join(errors))
+    df = pd.concat(parts, ignore_index=True)
+    df = df.drop_duplicates(subset=["Tarih"], keep="last").sort_values("Tarih").reset_index(drop=True)
+    df = _extend_deposit_rate_linear(df)
+    return df, "+".join(sources_used)
