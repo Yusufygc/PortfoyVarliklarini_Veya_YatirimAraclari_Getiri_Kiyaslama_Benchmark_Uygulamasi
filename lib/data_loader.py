@@ -62,6 +62,7 @@ def _validate_price_coverage(
     start: str,
     end: str,
     tolerance_days: int = CACHE_START_TOLERANCE_DAYS,
+    strict: bool = True,
 ) -> pd.DataFrame:
     if df is None or df.empty:
         raise ValueError(f"Fiyat verisi bos: {start} - {end}.")
@@ -85,10 +86,19 @@ def _validate_price_coverage(
             late_or_empty.append(f"{sym}: ilk veri {pd.Timestamp(first_valid).date()}")
 
     if late_or_empty:
-        raise ValueError(
-            "Fiyat verisi istenen baslangic tarihini kapsamiyor. "
-            f"Istenen baslangic: {start}; " + "; ".join(late_or_empty)
-        )
+        if strict:
+            raise ValueError(
+                "Fiyat verisi istenen baslangic tarihini kapsamiyor. "
+                f"Istenen baslangic: {start}; " + "; ".join(late_or_empty)
+            )
+        else:
+            warnings.warn(
+                "Bazi semboller istenen baslangic tarihini kapsamiyor "
+                f"(IPO / listeleme tarihinden once olabilir): "
+                + "; ".join(late_or_empty),
+                UserWarning,
+                stacklevel=3,
+            )
 
     return sliced
 
@@ -100,6 +110,7 @@ def fetch_prices(
     cache_path: str,
     max_cache_age_hours: int = 12,
     require_start_coverage: bool = True,
+    strict_coverage: bool = True,
 ) -> pd.DataFrame:
     symbols = _normalize_symbols(symbols)
     _set_yfinance_cache_location(cache_path)
@@ -115,7 +126,7 @@ def fetch_prices(
                     sliced = cached.loc[start:end, symbols]
                     # Cache geçerli: istenen başlangıç tarihini kapsıyor olmalı (7 gün tolerans)
                     if require_start_coverage:
-                        return _validate_price_coverage(sliced, symbols, start, end)
+                        return _validate_price_coverage(sliced, symbols, start, end, strict=strict_coverage)
                     if not sliced.empty:
                         return sliced
             except ValueError as exc:
@@ -170,10 +181,13 @@ def fetch_prices(
                     stacklevel=2,
                 )
 
-    # Forward-fill with gap warning
-    gap_mask = df.isna().sum(axis=1) > 0
+    # Forward-fill with gap warning (IPO/listeleme öncesi NaN'lar sayılmaz)
     df_filled = df.ffill(limit=MAX_FORWARD_FILL_DAYS)
-    remaining_gaps = df_filled.isna().sum().sum()
+    remaining_gaps = 0
+    for sym in df_filled.columns:
+        first_valid = df[sym].first_valid_index()
+        if first_valid is not None:
+            remaining_gaps += df_filled.loc[first_valid:, sym].isna().sum()
     if remaining_gaps > 0:
         warnings.warn(
             f"{remaining_gaps} eksik değer {MAX_FORWARD_FILL_DAYS} iş günü sınırını aştı. "
@@ -204,7 +218,7 @@ def fetch_prices(
     _atomic_write_bytes(cache_file, _write)
 
     if require_start_coverage:
-        return _validate_price_coverage(df_filled, symbols, start, end)
+        return _validate_price_coverage(df_filled, symbols, start, end, strict=strict_coverage)
     return df_filled.loc[start:end, [s for s in symbols if s in df_filled.columns]]
 
 
